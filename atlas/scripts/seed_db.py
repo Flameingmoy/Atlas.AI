@@ -1,49 +1,46 @@
 import random
 import uuid
 import h3
+import duckdb
 from shapely.geometry import Point, Polygon
-from geoalchemy2.shape import from_shape
-from sqlmodel import Session, create_engine, SQLModel
-from app.models.schema import POI, Demographic
+import json
+from app.core.db import get_db_connection, init_db
 
-# Database URL - Update this with your actual connection string
-# For now, we'll use a placeholder or assume a local DB
-DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/atlas_db"
-
-def create_db_and_tables():
-    engine = create_engine(DATABASE_URL)
-    SQLModel.metadata.create_all(engine)
-    return engine
-
-def generate_austin_data(engine):
-    # Bangalore, India approximate center and bounds
-    # Lat: 12.9716, Lon: 77.5946
+def generate_bangalore_data():
+    conn = get_db_connection()
+    
+    # Clear existing data
+    conn.execute("DELETE FROM pois")
+    conn.execute("DELETE FROM demographics")
+    
+    # Bangalore, India approximate center
     bangalore_center = (12.9716, 77.5946)
     
     # 1. Generate Demographics (H3 Hexagons)
     # Get all hexes at res 9 within a ring of the center
-    h3_indices = h3.k_ring(h3.geo_to_h3(bangalore_center[0], bangalore_center[1], 9), 50)
+    # v4 API: latlng_to_cell, grid_disk
+    center_h3 = h3.latlng_to_cell(bangalore_center[0], bangalore_center[1], 9)
+    h3_indices = h3.grid_disk(center_h3, 50)
     
-    demographics = []
+    print(f"Seeding {len(h3_indices)} demographic hexes...")
+    
     for h3_idx in h3_indices:
-        # Random data generation
-        pop_density = random.uniform(5000, 50000) # Higher density for Bangalore
-        income = random.uniform(10000, 80000) # Adjusted for INR/context (roughly)
-        traffic = random.uniform(5, 10) # High traffic!
+        pop_density = random.uniform(5000, 50000)
+        income = random.uniform(10000, 80000)
+        traffic = random.uniform(5, 10)
         
-        # Get boundary polygon
-        boundary_coords = h3.h3_to_geo_boundary(h3_idx, geo_json=True) # (lon, lat)
-        # Shapely expects (lon, lat)
-        poly = Polygon(boundary_coords)
+        # Get boundary polygon for visualization
+        # v4 API: cell_to_boundary returns tuple of (lat, lon)
+        boundary_coords = h3.cell_to_boundary(h3_idx) # (lat, lon)
+        # Shapely expects (lon, lat), so swap
+        boundary_coords_lonlat = [(c[1], c[0]) for c in boundary_coords]
+        poly = Polygon(boundary_coords_lonlat)
+        wkt_boundary = poly.wkt
         
-        demo = Demographic(
-            h3_index=h3_idx,
-            population_density=pop_density,
-            median_income=int(income),
-            traffic_score=traffic,
-            boundary=from_shape(poly, srid=4326)
-        )
-        demographics.append(demo)
+        conn.execute("""
+            INSERT INTO demographics (h3_index, population_density, median_income, traffic_score, boundary)
+            VALUES (?, ?, ?, ?, ST_GeomFromText(?))
+        """, (h3_idx, pop_density, int(income), traffic, wkt_boundary))
         
     # 2. Generate POIs
     categories = {
@@ -52,42 +49,29 @@ def generate_austin_data(engine):
         "Retail": ["Phoenix Marketcity", "Orion Mall", "More Supermarket", "Reliance Smart"]
     }
     
-    pois = []
-    for _ in range(100): # 100 random POIs
+    print("Seeding 100 POIs...")
+    for _ in range(100):
         cat = random.choice(list(categories.keys()))
         name = random.choice(categories[cat])
         
-        # Random location near Bangalore
         lat = bangalore_center[0] + random.uniform(-0.05, 0.05)
         lon = bangalore_center[1] + random.uniform(-0.05, 0.05)
         
         point = Point(lon, lat)
+        wkt_point = point.wkt
         
-        poi = POI(
-            name=name,
-            category=cat,
-            subcategory=cat, # Simplified for now
-            location=from_shape(point, srid=4326),
-            metadata_json={"rating": random.uniform(3.0, 5.0), "open_late": random.choice([True, False])}
-        )
-        pois.append(poi)
-
-    # Save to DB
-    with Session(engine) as session:
-        print(f"Seeding {len(demographics)} demographic hexes...")
-        session.add_all(demographics)
-        print(f"Seeding {len(pois)} POIs...")
-        session.add_all(pois)
-        session.commit()
-    
+        meta = json.dumps({"rating": random.uniform(3.0, 5.0), "open_late": random.choice([True, False])})
+        
+        conn.execute("""
+            INSERT INTO pois (id, name, category, subcategory, location, metadata_json)
+            VALUES (?, ?, ?, ?, ST_GeomFromText(?), ?)
+        """, (str(uuid.uuid4()), name, cat, cat, wkt_point, meta))
+        
+    conn.commit() # DuckDB auto-commits usually, but explicit is fine
+    conn.close()
     print("Seeding Complete!")
 
 if __name__ == "__main__":
-    # Note: This requires the DB to exist. 
-    # In a real run, we'd check/create the DB.
-    try:
-        engine = create_db_and_tables()
-        generate_austin_data(engine)
-    except Exception as e:
-        print(f"Error seeding data: {e}")
-        print("Ensure PostgreSQL is running and 'atlas_db' exists.")
+    # Ensure tables exist
+    init_db()
+    generate_bangalore_data()

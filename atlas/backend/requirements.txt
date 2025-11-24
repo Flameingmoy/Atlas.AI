@@ -1,10 +1,11 @@
 fastapi
 uvicorn
 sqlmodel
-geoalchemy2
-psycopg2-binary
 h3
 shapely
 scikit-learn
 numpy
 requests
+langchain
+langchain-ollama
+duckdb
