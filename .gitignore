@@ -4,6 +4,12 @@ __pycache__/
 *$py.class
 venv/
 .env
+*.log
+
+# Database
+atlas.duckdb
+*.db
+*.sqlite3
 
 # Node
 node_modules/
@@ -11,3 +17,4 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+coverage/
