@@ -2,7 +2,7 @@
 
 **Atlas.AI** is an intelligent location intelligence platform designed to de-risk physical business expansion. It combines geospatial data analysis with a conversational AI interface, allowing users to find optimal real estate locations through natural language.
 
-![Atlas Interface](https://via.placeholder.com/800x400?text=Atlas+UI+Preview) *Add a screenshot here later*
+![Atlas Interface](assets/atlas_screenshot.png)
 
 ## 🚀 Features
 
