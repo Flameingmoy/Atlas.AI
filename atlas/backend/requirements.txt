@@ -8,4 +8,6 @@ numpy
 requests
 langchain
 langchain-ollama
+langchain-groq
 duckdb
+python-dotenv

@@ -1,8 +1,9 @@
-from langchain_ollama import ChatOllama
+from langchain_groq import ChatGroq
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
 from typing import List, Dict, Any
 import json
+import os
 
 # Define Tools
 @tool
@@ -30,8 +31,16 @@ def get_bangalore_demographics():
 
 class AIAgentService:
     def __init__(self):
-        # Initialize ChatOllama with the user's specified model
-        self.llm = ChatOllama(model="qwen3:32b", temperature=0)
+        # Initialize ChatGroq with API key from environment
+        groq_api_key = os.getenv("GROQ_API_KEY")
+        if not groq_api_key:
+            raise ValueError("GROQ_API_KEY environment variable is not set")
+        
+        self.llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            temperature=0,
+            api_key=groq_api_key
+        )
         
         # Bind tools to the LLM
         self.tools = [set_map_layer, get_bangalore_demographics]
