@@ -7,8 +7,6 @@ venv/
 *.log
 
 # Database
-atlas.duckdb
-*.db
 *.sqlite3
 
 # Node
