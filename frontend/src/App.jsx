@@ -157,8 +157,18 @@ function App() {
             if (result.centroid) {
               setMapCenter({ lat: result.centroid.lat, lon: result.centroid.lon, zoom: 14 });
             }
-            // Clear any previous location recommendations (area analysis uses side panel only)
-            setRecommendations(null);
+            // Set recommendations with area info for polygon highlighting (no medal markers)
+            setRecommendations({ 
+              recommendations: [{ 
+                area: result.area, 
+                centroid: result.centroid,
+                // These prevent medal marker from showing undefined
+                composite_score: null,
+                competitors: null,
+                complementary: null,
+                _isAreaAnalysis: true  // Flag to skip medal markers
+              }] 
+            });
           } else {
             setSidePanel({ type: 'error', content: result.error || 'Failed to analyze area' });
           }

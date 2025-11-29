@@ -86,6 +86,30 @@ class AreaBusinessAnalyzer:
         
         return None
     
+    def find_location_from_pois(self, location_name: str) -> Optional[Dict]:
+        """
+        Find a location by searching POI names when area is not found.
+        Returns centroid of matching POIs.
+        """
+        query = """
+            SELECT 
+                AVG(ST_X(geom)) as lon,
+                AVG(ST_Y(geom)) as lat,
+                COUNT(*) as count
+            FROM points_super
+            WHERE LOWER(name) LIKE LOWER(%s)
+        """
+        results = execute_query(query, (f"%{location_name}%",))
+        if results and results[0][0] is not None and results[0][2] > 0:
+            return {
+                "name": location_name.title(),
+                "lon": float(results[0][0]),
+                "lat": float(results[0][1]),
+                "poi_count": int(results[0][2]),
+                "source": "poi"
+            }
+        return None
+    
     def get_category_distribution(self, area_name: str) -> Dict[str, int]:
         """Get count of POIs by super_category in an area using spatial join"""
         # Use spatial containment to find POIs within the area polygon
@@ -213,19 +237,33 @@ class AreaBusinessAnalyzer:
         2. Complementary opportunities
         3. Business examples for each category
         """
-        # Find the area
+        # Find the area in area_with_centroid
         actual_area = self.find_area_by_name(area_name)
-        if not actual_area:
-            return {
-                "success": False,
-                "error": f"Could not find area '{area_name}' in Delhi"
-            }
+        centroid = None
+        area_distribution = None
+        location_source = "area"
         
-        # Get area centroid
-        centroid = self.get_area_centroid(actual_area)
+        if actual_area:
+            # Found as a defined area
+            centroid = self.get_area_centroid(actual_area)
+            area_distribution = self.get_category_distribution(actual_area)
+        else:
+            # Try to find as a POI location (e.g., "Khan Market")
+            poi_location = self.find_location_from_pois(area_name)
+            if poi_location:
+                actual_area = poi_location["name"]
+                centroid = {"name": poi_location["name"], "lon": poi_location["lon"], "lat": poi_location["lat"]}
+                # Get distribution by radius around this point
+                area_distribution = self.get_category_distribution_by_radius(
+                    poi_location["lat"], poi_location["lon"], radius_km=1.0
+                )
+                location_source = "poi"
+            else:
+                return {
+                    "success": False,
+                    "error": f"Could not find area or location '{area_name}' in Delhi"
+                }
         
-        # Get category distribution
-        area_distribution = self.get_category_distribution(actual_area)
         if not area_distribution:
             return {
                 "success": False,
