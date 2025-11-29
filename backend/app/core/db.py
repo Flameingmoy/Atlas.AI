@@ -18,8 +18,8 @@ DB_NAME = os.getenv("DB_NAME", "atlas_db")
 DATABASE_URL = os.getenv("DATABASE_URL", f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
 
 # Connection pool configuration
-MIN_CONNECTIONS = 2
-MAX_CONNECTIONS = 20
+MIN_CONNECTIONS = 10
+MAX_CONNECTIONS = 80
 
 # Global connection pool (thread-safe)
 _connection_pool: pool.ThreadedConnectionPool | None = None

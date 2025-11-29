@@ -95,6 +95,57 @@ const getCategoryColor = (category) => {
     return '#6B7280'; // Gray
 };
 
+// Get category type for clustering (simpler key for aggregation)
+const getCategoryType = (category) => {
+    if (!category) return 'other';
+    
+    const cat = category.toLowerCase();
+    
+    if (cat.includes('restaurant') || cat.includes('diner') || cat.includes('steakhouse') || 
+        cat.includes('buffet') || cat.includes('barbecue') || cat.includes('grill')) {
+        return 'food';
+    }
+    if (cat.includes('cafe') || cat.includes('coffee') || cat.includes('tea') || 
+        cat.includes('bakery') || cat.includes('patisserie') || cat.includes('dessert')) {
+        return 'cafe';
+    }
+    if (cat.includes('mall') || cat.includes('shopping') || cat.includes('store') || 
+        cat.includes('shop') || cat.includes('retail') || cat.includes('market') ||
+        cat.includes('supermarket') || cat.includes('grocery')) {
+        return 'shopping';
+    }
+    if (cat.includes('monument') || cat.includes('landmark') || cat.includes('fort') ||
+        cat.includes('palace') || cat.includes('temple') || cat.includes('mosque') ||
+        cat.includes('church') || cat.includes('museum') || cat.includes('heritage') ||
+        cat.includes('historical')) {
+        return 'monument';
+    }
+    if (cat.includes('hospital') || cat.includes('clinic') || cat.includes('medical') ||
+        cat.includes('pharmacy') || cat.includes('doctor') || cat.includes('dentist') ||
+        cat.includes('health')) {
+        return 'healthcare';
+    }
+    if (cat.includes('metro') || cat.includes('station') || cat.includes('railway') ||
+        cat.includes('train') || cat.includes('bus') || cat.includes('transport')) {
+        return 'transport';
+    }
+    if (cat.includes('cinema') || cat.includes('theatre') || cat.includes('theater') ||
+        cat.includes('park') || cat.includes('entertainment') || cat.includes('amusement') ||
+        cat.includes('gym') || cat.includes('spa') || cat.includes('club')) {
+        return 'entertainment';
+    }
+    if (cat.includes('school') || cat.includes('college') || cat.includes('university') ||
+        cat.includes('education') || cat.includes('library')) {
+        return 'education';
+    }
+    if (cat.includes('hotel') || cat.includes('resort') || cat.includes('hostel') ||
+        cat.includes('lodge') || cat.includes('motel')) {
+        return 'hotel';
+    }
+    
+    return 'other';
+};
+
 const Map = ({ activeLayers, selectedLocation, mapCenter, filteredPOIs }) => {
     const mapContainer = useRef(null);
     const map = useRef(null);
@@ -255,13 +306,12 @@ const Map = ({ activeLayers, selectedLocation, mapCenter, filteredPOIs }) => {
     }, []);
 
     // Compute zoom-based POI limit
-    // Lower zoom (zoomed out) = fewer POIs; higher zoom (zoomed in) = more POIs
+    // WebGL clustering handles more points efficiently
     const getLimitForZoom = useCallback((zoom) => {
-        if (zoom <= 10) return 100;
-        if (zoom <= 12) return 200;
-        if (zoom <= 14) return 400;
-        if (zoom <= 16) return 800;
-        return 1500; // street-level
+        if (zoom <= 10) return 500;
+        if (zoom <= 12) return 1000;
+        if (zoom <= 14) return 2000;
+        return 3000; // street-level - WebGL can handle it
     }, []);
 
     // Fetch POIs for current viewport (debounced)
@@ -298,7 +348,7 @@ const Map = ({ activeLayers, selectedLocation, mapCenter, filteredPOIs }) => {
                 setPois(data);
                 console.log(`Received ${data.length} POIs`);
             }
-        }, 150); // 150ms debounce
+        }, 300); // 300ms debounce for smoother experience
     }, [mapLoaded, activeLayers, getLimitForZoom, filteredPOIs]);
 
     // Handle filtered POIs from category/super_category search
@@ -362,41 +412,255 @@ const Map = ({ activeLayers, selectedLocation, mapCenter, filteredPOIs }) => {
         }
     }, [activeLayers]);
 
-    // Add/remove markers
+    // Initialize POI cluster source and layers (once on map load)
     useEffect(() => {
         if (!map.current || !mapLoaded) return;
+        
+        // Only add source once
+        if (map.current.getSource('pois')) return;
+        
+        // Add clustered GeoJSON source with category counting
+        map.current.addSource('pois', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] },
+            cluster: true,
+            clusterMaxZoom: 14,
+            clusterRadius: 50,
+            // Count each category type in clusters
+            clusterProperties: {
+                'food': ['+', ['case', ['==', ['get', 'catType'], 'food'], 1, 0]],
+                'cafe': ['+', ['case', ['==', ['get', 'catType'], 'cafe'], 1, 0]],
+                'shopping': ['+', ['case', ['==', ['get', 'catType'], 'shopping'], 1, 0]],
+                'monument': ['+', ['case', ['==', ['get', 'catType'], 'monument'], 1, 0]],
+                'healthcare': ['+', ['case', ['==', ['get', 'catType'], 'healthcare'], 1, 0]],
+                'transport': ['+', ['case', ['==', ['get', 'catType'], 'transport'], 1, 0]],
+                'entertainment': ['+', ['case', ['==', ['get', 'catType'], 'entertainment'], 1, 0]],
+                'education': ['+', ['case', ['==', ['get', 'catType'], 'education'], 1, 0]],
+                'hotel': ['+', ['case', ['==', ['get', 'catType'], 'hotel'], 1, 0]],
+                'other': ['+', ['case', ['==', ['get', 'catType'], 'other'], 1, 0]]
+            }
+        });
 
-        // Clear existing markers
-        markersRef.current.forEach(m => m.remove());
-        markersRef.current = [];
+        // Cluster circles layer - color by dominant category
+        map.current.addLayer({
+            id: 'poi-clusters',
+            type: 'circle',
+            source: 'pois',
+            filter: ['has', 'point_count'],
+            paint: {
+                'circle-color': [
+                    'case',
+                    // Find which category has the max count
+                    ['all', 
+                        ['>=', ['get', 'food'], ['get', 'cafe']],
+                        ['>=', ['get', 'food'], ['get', 'shopping']],
+                        ['>=', ['get', 'food'], ['get', 'monument']],
+                        ['>=', ['get', 'food'], ['get', 'healthcare']],
+                        ['>=', ['get', 'food'], ['get', 'transport']],
+                        ['>=', ['get', 'food'], ['get', 'entertainment']],
+                        ['>=', ['get', 'food'], ['get', 'education']],
+                        ['>=', ['get', 'food'], ['get', 'hotel']],
+                        ['>=', ['get', 'food'], ['get', 'other']]
+                    ], '#EF4444', // Red - Food
+                    ['all',
+                        ['>=', ['get', 'cafe'], ['get', 'food']],
+                        ['>=', ['get', 'cafe'], ['get', 'shopping']],
+                        ['>=', ['get', 'cafe'], ['get', 'monument']],
+                        ['>=', ['get', 'cafe'], ['get', 'healthcare']],
+                        ['>=', ['get', 'cafe'], ['get', 'transport']],
+                        ['>=', ['get', 'cafe'], ['get', 'entertainment']],
+                        ['>=', ['get', 'cafe'], ['get', 'education']],
+                        ['>=', ['get', 'cafe'], ['get', 'hotel']],
+                        ['>=', ['get', 'cafe'], ['get', 'other']]
+                    ], '#F59E0B', // Amber - Cafe
+                    ['all',
+                        ['>=', ['get', 'shopping'], ['get', 'food']],
+                        ['>=', ['get', 'shopping'], ['get', 'cafe']],
+                        ['>=', ['get', 'shopping'], ['get', 'monument']],
+                        ['>=', ['get', 'shopping'], ['get', 'healthcare']],
+                        ['>=', ['get', 'shopping'], ['get', 'transport']],
+                        ['>=', ['get', 'shopping'], ['get', 'entertainment']],
+                        ['>=', ['get', 'shopping'], ['get', 'education']],
+                        ['>=', ['get', 'shopping'], ['get', 'hotel']],
+                        ['>=', ['get', 'shopping'], ['get', 'other']]
+                    ], '#8B5CF6', // Purple - Shopping
+                    ['all',
+                        ['>=', ['get', 'monument'], ['get', 'food']],
+                        ['>=', ['get', 'monument'], ['get', 'cafe']],
+                        ['>=', ['get', 'monument'], ['get', 'shopping']],
+                        ['>=', ['get', 'monument'], ['get', 'healthcare']],
+                        ['>=', ['get', 'monument'], ['get', 'transport']],
+                        ['>=', ['get', 'monument'], ['get', 'entertainment']],
+                        ['>=', ['get', 'monument'], ['get', 'education']],
+                        ['>=', ['get', 'monument'], ['get', 'hotel']],
+                        ['>=', ['get', 'monument'], ['get', 'other']]
+                    ], '#10B981', // Green - Monument
+                    ['all',
+                        ['>=', ['get', 'healthcare'], ['get', 'food']],
+                        ['>=', ['get', 'healthcare'], ['get', 'cafe']],
+                        ['>=', ['get', 'healthcare'], ['get', 'shopping']],
+                        ['>=', ['get', 'healthcare'], ['get', 'monument']],
+                        ['>=', ['get', 'healthcare'], ['get', 'transport']],
+                        ['>=', ['get', 'healthcare'], ['get', 'entertainment']],
+                        ['>=', ['get', 'healthcare'], ['get', 'education']],
+                        ['>=', ['get', 'healthcare'], ['get', 'hotel']],
+                        ['>=', ['get', 'healthcare'], ['get', 'other']]
+                    ], '#3B82F6', // Blue - Healthcare
+                    ['all',
+                        ['>=', ['get', 'transport'], ['get', 'food']],
+                        ['>=', ['get', 'transport'], ['get', 'cafe']],
+                        ['>=', ['get', 'transport'], ['get', 'shopping']],
+                        ['>=', ['get', 'transport'], ['get', 'monument']],
+                        ['>=', ['get', 'transport'], ['get', 'healthcare']],
+                        ['>=', ['get', 'transport'], ['get', 'entertainment']],
+                        ['>=', ['get', 'transport'], ['get', 'education']],
+                        ['>=', ['get', 'transport'], ['get', 'hotel']],
+                        ['>=', ['get', 'transport'], ['get', 'other']]
+                    ], '#F97316', // Orange - Transport
+                    ['all',
+                        ['>=', ['get', 'entertainment'], ['get', 'food']],
+                        ['>=', ['get', 'entertainment'], ['get', 'cafe']],
+                        ['>=', ['get', 'entertainment'], ['get', 'shopping']],
+                        ['>=', ['get', 'entertainment'], ['get', 'monument']],
+                        ['>=', ['get', 'entertainment'], ['get', 'healthcare']],
+                        ['>=', ['get', 'entertainment'], ['get', 'transport']],
+                        ['>=', ['get', 'entertainment'], ['get', 'education']],
+                        ['>=', ['get', 'entertainment'], ['get', 'hotel']],
+                        ['>=', ['get', 'entertainment'], ['get', 'other']]
+                    ], '#EC4899', // Pink - Entertainment
+                    ['all',
+                        ['>=', ['get', 'education'], ['get', 'food']],
+                        ['>=', ['get', 'education'], ['get', 'cafe']],
+                        ['>=', ['get', 'education'], ['get', 'shopping']],
+                        ['>=', ['get', 'education'], ['get', 'monument']],
+                        ['>=', ['get', 'education'], ['get', 'healthcare']],
+                        ['>=', ['get', 'education'], ['get', 'transport']],
+                        ['>=', ['get', 'education'], ['get', 'entertainment']],
+                        ['>=', ['get', 'education'], ['get', 'hotel']],
+                        ['>=', ['get', 'education'], ['get', 'other']]
+                    ], '#06B6D4', // Cyan - Education
+                    ['all',
+                        ['>=', ['get', 'hotel'], ['get', 'food']],
+                        ['>=', ['get', 'hotel'], ['get', 'cafe']],
+                        ['>=', ['get', 'hotel'], ['get', 'shopping']],
+                        ['>=', ['get', 'hotel'], ['get', 'monument']],
+                        ['>=', ['get', 'hotel'], ['get', 'healthcare']],
+                        ['>=', ['get', 'hotel'], ['get', 'transport']],
+                        ['>=', ['get', 'hotel'], ['get', 'entertainment']],
+                        ['>=', ['get', 'hotel'], ['get', 'education']],
+                        ['>=', ['get', 'hotel'], ['get', 'other']]
+                    ], '#6366F1', // Indigo - Hotel
+                    '#6B7280' // Gray - Other/default
+                ],
+                'circle-radius': [
+                    'step', ['get', 'point_count'],
+                    15, 20,
+                    20, 100,
+                    25, 500,
+                    30
+                ],
+                'circle-stroke-width': 2,
+                'circle-stroke-color': '#fff'
+            }
+        });
 
-        // Add POI markers - POIs are already filtered/ranked by backend viewport query
-        if (activeLayers.includes('competitors') && pois.length > 0) {
-            pois.forEach((poi) => {
-                if (!poi.lat || !poi.lon) return;
-                
-                const color = getCategoryColor(poi.category);
-                
-                const el = document.createElement('div');
-                el.style.width = '12px';
-                el.style.height = '12px';
-                el.style.backgroundColor = color;
-                el.style.borderRadius = '50%';
-                el.style.border = '2px solid white';
-                el.style.cursor = 'pointer';
+        // Cluster count label
+        map.current.addLayer({
+            id: 'poi-cluster-count',
+            type: 'symbol',
+            source: 'pois',
+            filter: ['has', 'point_count'],
+            layout: {
+                'text-field': '{point_count_abbreviated}',
+                'text-font': ['Open Sans Bold'],
+                'text-size': 12
+            },
+            paint: {
+                'text-color': '#333'
+            }
+        });
 
-                const marker = new maplibregl.Marker({ element: el })
-                    .setLngLat([poi.lon, poi.lat])
-                    .setPopup(
-                        new maplibregl.Popup({ offset: 25 })
-                            .setHTML(`<div style="color:#333;"><b>${poi.name}</b><br/>${poi.category || ''}</div>`)
-                    )
-                    .addTo(map.current);
+        // Unclustered individual points
+        map.current.addLayer({
+            id: 'poi-unclustered',
+            type: 'circle',
+            source: 'pois',
+            filter: ['!', ['has', 'point_count']],
+            paint: {
+                'circle-color': ['get', 'color'],
+                'circle-radius': 6,
+                'circle-stroke-width': 2,
+                'circle-stroke-color': '#fff'
+            }
+        });
 
-                markersRef.current.push(marker);
+        // Click on cluster to zoom in
+        map.current.on('click', 'poi-clusters', (e) => {
+            const features = map.current.queryRenderedFeatures(e.point, { layers: ['poi-clusters'] });
+            const clusterId = features[0].properties.cluster_id;
+            map.current.getSource('pois').getClusterExpansionZoom(clusterId, (err, zoom) => {
+                if (err) return;
+                map.current.easeTo({
+                    center: features[0].geometry.coordinates,
+                    zoom: zoom
+                });
             });
+        });
+
+        // Click on individual POI to show popup
+        map.current.on('click', 'poi-unclustered', (e) => {
+            const coords = e.features[0].geometry.coordinates.slice();
+            const { name, category } = e.features[0].properties;
             
-            console.log(`Rendered ${pois.length} markers for current viewport`);
+            new maplibregl.Popup({ offset: 15 })
+                .setLngLat(coords)
+                .setHTML(`<div style="color:#333;"><b>${name}</b><br/>${category || ''}</div>`)
+                .addTo(map.current);
+        });
+
+        // Cursor changes
+        map.current.on('mouseenter', 'poi-clusters', () => {
+            map.current.getCanvas().style.cursor = 'pointer';
+        });
+        map.current.on('mouseleave', 'poi-clusters', () => {
+            map.current.getCanvas().style.cursor = '';
+        });
+        map.current.on('mouseenter', 'poi-unclustered', () => {
+            map.current.getCanvas().style.cursor = 'pointer';
+        });
+        map.current.on('mouseleave', 'poi-unclustered', () => {
+            map.current.getCanvas().style.cursor = '';
+        });
+    }, [mapLoaded]);
+
+    // Update POI source data when pois change (fast WebGL update, no DOM markers)
+    useEffect(() => {
+        if (!map.current || !mapLoaded) return;
+        
+        const source = map.current.getSource('pois');
+        if (!source) return;
+
+        if (activeLayers.includes('competitors') && pois.length > 0) {
+            const geojson = {
+                type: 'FeatureCollection',
+                features: pois.map(poi => ({
+                    type: 'Feature',
+                    geometry: {
+                        type: 'Point',
+                        coordinates: [poi.lon, poi.lat]
+                    },
+                    properties: {
+                        name: poi.name,
+                        category: poi.category || '',
+                        color: getCategoryColor(poi.category),
+                        catType: getCategoryType(poi.category)
+                    }
+                }))
+            };
+            source.setData(geojson);
+            console.log(`Rendered ${pois.length} POIs via WebGL clusters`);
+        } else {
+            source.setData({ type: 'FeatureCollection', features: [] });
         }
     }, [pois, activeLayers, mapLoaded]);
 
