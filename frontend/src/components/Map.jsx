@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, GeoJSON, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -18,6 +18,29 @@ let DefaultIcon = L.icon({
 L.Marker.prototype.options.icon = DefaultIcon;
 
 const DELHI_CENTER = [28.6139, 77.1025]; // Lat, Lng
+const RADIUS_KM = 30; // 30km radius
+const PADDING_KM = 10; // 10km padding
+
+// Helper to create circle polygon coordinates [lng, lat] for GeoJSON
+// Adjusts for latitude distortion to create a visual circle
+const createCirclePolygon = (centerLat, centerLng, radiusKm, steps = 64) => {
+    const coordinates = [];
+    const latRad = centerLat * (Math.PI / 180);
+    const kmPerDegLat = 111.32;
+    const kmPerDegLng = 111.32 * Math.cos(latRad);
+
+    const radiusDegLat = radiusKm / kmPerDegLat;
+    const radiusDegLng = radiusKm / kmPerDegLng;
+
+    for (let i = 0; i < steps; i++) {
+        const angle = (i / steps) * 2 * Math.PI;
+        const dLat = radiusDegLat * Math.cos(angle);
+        const dLng = radiusDegLng * Math.sin(angle); 
+        coordinates.push([centerLng + dLng, centerLat + dLat]);
+    }
+    coordinates.push(coordinates[0]); // Close ring
+    return coordinates;
+};
 
 function LocationMarker({ onLocationSelect }) {
     const [position, setPosition] = useState(null);
@@ -41,6 +64,39 @@ const Map = ({ activeLayers }) => {
     const [isochrone, setIsochrone] = useState(null);
     const [selectedLocation, setSelectedLocation] = useState(null);
 
+    // Generate the mask GeoJSON (World minus Delhi Circle)
+    const maskGeoJSON = useMemo(() => {
+        const circleRing = createCirclePolygon(DELHI_CENTER[0], DELHI_CENTER[1], RADIUS_KM);
+        return {
+            type: "Feature",
+            geometry: {
+                type: "Polygon",
+                coordinates: [
+                    // Outer ring (World) - Counter-Clockwise
+                    [[-180, -90], [180, -90], [180, 90], [-180, 90], [-180, -90]],
+                    // Inner ring (Hole - Delhi Circle) - Clockwise
+                    circleRing
+                ]
+            }
+        };
+    }, []);
+
+    // Calculate Max Bounds based on KM
+    const maxBounds = useMemo(() => {
+        const latRad = DELHI_CENTER[0] * (Math.PI / 180);
+        const kmPerDegLat = 111.32;
+        const kmPerDegLng = 111.32 * Math.cos(latRad);
+        
+        const totalRadiusKm = RADIUS_KM + PADDING_KM;
+        const latOffset = totalRadiusKm / kmPerDegLat;
+        const lngOffset = totalRadiusKm / kmPerDegLng;
+
+        return [
+            [DELHI_CENTER[0] - latOffset, DELHI_CENTER[1] - lngOffset],
+            [DELHI_CENTER[0] + latOffset, DELHI_CENTER[1] + lngOffset]
+        ];
+    }, []);
+
     useEffect(() => {
         // Load boundary
         fetchBoundary().then(data => {
@@ -59,27 +115,59 @@ const Map = ({ activeLayers }) => {
         }
     }, [activeLayers]);
 
+    // Filter POIs to only those within the circle
+    const visiblePois = useMemo(() => {
+        const latRad = DELHI_CENTER[0] * (Math.PI / 180);
+        const kmPerDegLat = 111.32;
+        const kmPerDegLng = 111.32 * Math.cos(latRad);
+        const radiusDegLat = RADIUS_KM / kmPerDegLat;
+
+        return pois.filter(p => {
+            const dLat = p.lat - DELHI_CENTER[0];
+            const dLng = (p.lon - DELHI_CENTER[1]) * Math.cos(latRad); // Adjust lng for distance calc
+            // Approximate Euclidean distance in degrees (normalized to lat degrees)
+            return Math.sqrt(dLat*dLat + dLng*dLng) <= radiusDegLat;
+        });
+    }, [pois]);
+
     const handleLocationSelect = async (latlng) => {
         setSelectedLocation(latlng);
         // Fetch isochrone
         const iso = await fetchIsochrone(latlng.lat, latlng.lng, 15);
         if (iso) setIsochrone(iso);
-        
-        // Example: Fetch external POIs near the click
-        // const extPois = await fetchExternalPOI(latlng.lat, latlng.lng);
-        // console.log("External POIs:", extPois);
     };
 
     return (
-        <MapContainer center={DELHI_CENTER} zoom={11} style={{ height: '100%', width: '100%' }}>
+        <MapContainer 
+            center={DELHI_CENTER} 
+            zoom={11} 
+            minZoom={10}
+            maxBounds={maxBounds}
+            maxBoundsViscosity={1.0}
+            style={{ height: '100%', width: '100%', background: '#1a1a1a' }}
+        >
             <TileLayer
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             />
             
-            {boundary && <GeoJSON key="boundary" data={boundary} style={{ color: 'blue', fillOpacity: 0.1 }} />}
+            {/* Mask Layer - Dulls out everything outside Delhi */}
+            <GeoJSON 
+                data={maskGeoJSON} 
+                style={{ 
+                    color: 'transparent', 
+                    fillColor: '#000000', 
+                    fillOpacity: 0.7,
+                    weight: 0
+                }} 
+                interactive={false}
+            />
+
+            {/* Official Boundary (Optional, for reference) */}
+            {boundary && <GeoJSON key="boundary" data={boundary} style={{ color: '#3b82f6', fillOpacity: 0, weight: 2 }} interactive={false} />}
             
-            {pois.map(poi => (
+            {/* POIs - Filtered */}
+            {visiblePois.map(poi => (
                 <Marker key={poi.id} position={[poi.lat, poi.lon]}>
                     <Popup>
                         <b>{poi.name}</b><br/>
