@@ -3,20 +3,23 @@ import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { fetchPOIs } from '../services/api';
 
-// Delhi NCT approximate boundary coordinates [lng, lat]
-const DELHI_BOUNDARY = [
-    [76.8388, 28.8845], [76.8686, 28.8739], [76.9063, 28.8804], [76.9348, 28.8687],
-    [76.9580, 28.8476], [76.9855, 28.8395], [77.0207, 28.8433], [77.0568, 28.8331],
-    [77.0924, 28.8121], [77.1172, 28.7918], [77.1458, 28.7726], [77.1680, 28.7594],
-    [77.2002, 28.7669], [77.2279, 28.7640], [77.2553, 28.7521], [77.2845, 28.7295],
-    [77.3087, 28.7072], [77.3348, 28.6838], [77.3499, 28.6515], [77.3470, 28.6155],
-    [77.3391, 28.5845], [77.3262, 28.5521], [77.3128, 28.5224], [77.2933, 28.4962],
-    [77.2683, 28.4789], [77.2380, 28.4706], [77.2048, 28.4681], [77.1709, 28.4734],
-    [77.1387, 28.4841], [77.1080, 28.4998], [77.0788, 28.5194], [77.0516, 28.5421],
-    [77.0268, 28.5672], [77.0047, 28.5943], [76.9852, 28.6228], [76.9687, 28.6527],
-    [76.9552, 28.6841], [76.9449, 28.7167], [76.9378, 28.7503], [76.9340, 28.7845],
-    [76.9200, 28.8100], [76.8900, 28.8350], [76.8600, 28.8600], [76.8388, 28.8845]
-];
+// Generate a circle around Delhi center
+const DELHI_CENTER = [77.1025, 28.6139]; // [lng, lat]
+const DELHI_RADIUS = 0.35; // degrees (~35-40km radius)
+
+// Create circular boundary with 64 points
+const generateCircle = (center, radius, points = 64) => {
+    const coords = [];
+    for (let i = 0; i <= points; i++) {
+        const angle = (i / points) * 2 * Math.PI;
+        const lng = center[0] + radius * Math.cos(angle) * 1.2; // slightly wider for lng
+        const lat = center[1] + radius * Math.sin(angle);
+        coords.push([lng, lat]);
+    }
+    return coords;
+};
+
+const DELHI_BOUNDARY = generateCircle(DELHI_CENTER, DELHI_RADIUS);
 
 // World coordinates for mask (covers everything outside Delhi)
 const WORLD_BOUNDS = [
@@ -54,9 +57,9 @@ const Map = ({ activeLayers }) => {
             style: 'https://tiles-v2.latlong.in/blue_essence.json',
             center: [77.1025, 28.6139], // Delhi center [lng, lat]
             zoom: 10,
-            minZoom: 9,
-            maxZoom: 18,
-            maxBounds: [[76.7, 28.35], [77.5, 28.95]] // Restrict to Delhi area
+            minZoom: 8,
+            maxZoom: 15, // Limited due to Latlong tile availability
+            maxBounds: [[76.5, 28.15], [77.7, 29.1]] // Wider circular area around Delhi
         });
 
         map.current.addControl(new maplibregl.NavigationControl(), 'top-right');
@@ -113,9 +116,16 @@ const Map = ({ activeLayers }) => {
         });
 
         map.current.on('error', (e) => {
-            // Only log actual errors, not tile loading issues
-            if (e.error && e.error.message) {
-                console.error('Map error:', e.error.message);
+            // Suppress known Latlong tile errors
+            if (e.error) {
+                const msg = e.error.message || '';
+                // Ignore: missing source layers, 403 tile errors, AJAX errors
+                if (msg.includes('Source layer') || 
+                    msg.includes('403') || 
+                    msg.includes('AJAXError')) {
+                    return;
+                }
+                console.error('Map error:', msg);
             }
         });
 
