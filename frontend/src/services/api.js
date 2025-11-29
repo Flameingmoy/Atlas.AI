@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = 'http://localhost:8000/api/v1';
+const API_URL = '/api';
 
 export const fetchPoints = async (category) => {
     try {
@@ -34,3 +34,33 @@ export const sendChatMessage = async (message) => {
         return { text: "Sorry, I encountered an error.", actions: [] };
     }
 }
+
+export const fetchBoundary = async () => {
+    try {
+        const response = await axios.get(`${API_URL}/delhi_boundary`);
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching boundary:", error);
+        return null;
+    }
+};
+
+export const fetchExternalPOI = async (lat, lon, category) => {
+    try {
+        const response = await axios.get(`${API_URL}/external/poi`, { params: { lat, lon, category } });
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching external POI:", error);
+        return null;
+    }
+};
+
+export const fetchIsochrone = async (lat, lon, time) => {
+    try {
+        const response = await axios.get(`${API_URL}/external/isochrone`, { params: { lat, lon, time } });
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching isochrone:", error);
+        return null;
+    }
+};

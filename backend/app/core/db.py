@@ -1,7 +1,7 @@
 import duckdb
 import os
 
-DB_PATH = "atlas.duckdb"
+DB_PATH = os.getenv("DATABASE_PATH", "atlas.duckdb")
 
 def get_db_connection():
     """
