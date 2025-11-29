@@ -15,7 +15,7 @@ def health_check():
     return {"status": "ok", "version": "0.1.0", "db": "duckdb"}
 
 @router.get("/points", response_model=List[dict])
-def get_points(category: Optional[str] = None, limit: int = 500):
+def get_points(category: Optional[str] = None, limit: int = 2000):
     """
     Get points of interest from delhi_points table.
     Only returns points within Delhi bounds and limited to prevent memory issues.
@@ -54,6 +54,82 @@ def get_points(category: Optional[str] = None, limit: int = 500):
             "lon": r[4]
         })
         
+    return points
+
+
+@router.get("/points/viewport", response_model=List[dict])
+def get_points_viewport(
+    min_lat: float,
+    min_lon: float,
+    max_lat: float,
+    max_lon: float,
+    limit: int = 100,
+    buffer_frac: float = 0.05
+):
+    """
+    Return POIs within the given viewport bounding box.
+    - Expands the bbox by `buffer_frac` (fraction of bbox size) to preload nearby points for smooth panning.
+    - Ranks POIs by an importance score derived from `areaScores` when available.
+    - Falls back to returning points from `pointsArea` (which has area mapping) if present.
+
+    Params: min_lat, min_lon, max_lat, max_lon, limit, buffer_frac
+    """
+    conn = get_db_connection()
+
+    # expand bbox slightly to preload nearby POIs
+    lat_span = max_lat - min_lat
+    lon_span = max_lon - min_lon
+    pad_lat = lat_span * buffer_frac
+    pad_lon = lon_span * buffer_frac
+
+    q_min_lat = min_lat - pad_lat
+    q_max_lat = max_lat + pad_lat
+    q_min_lon = min_lon - pad_lon
+    q_max_lon = max_lon + pad_lon
+
+    # Use pointsArea (points with area mapping) joined to areaScores to compute importance
+    query = """
+        SELECT p.id, p.name, p.category, ST_Y(p.geom) as lat, ST_X(p.geom) as lon,
+               COALESCE(a.Score_Footfall,0) as footfall,
+               COALESCE(a.Score_POI_Synergy,0) as poi_synergy,
+               COALESCE(a.Score_Transit,0) as transit,
+               (COALESCE(a.Score_Footfall,0)*0.5 + COALESCE(a.Score_POI_Synergy,0)*0.3 + COALESCE(a.Score_Transit,0)*0.2) as importance
+        FROM pointsArea p
+        LEFT JOIN areaScores a ON p.area = a.name
+        WHERE ST_Y(p.geom) BETWEEN ? AND ?
+          AND ST_X(p.geom) BETWEEN ? AND ?
+        ORDER BY importance DESC
+        LIMIT ?
+    """
+
+    params = [q_min_lat, q_max_lat, q_min_lon, q_max_lon, limit]
+
+    try:
+        results = conn.execute(query, params).fetchall()
+    except Exception:
+        # Fallback: if pointsArea/areaScores not available, query delhi_points directly
+        fallback_q = """
+            SELECT id, name, category, ST_Y(geom) as lat, ST_X(geom) as lon
+            FROM delhi_points
+            WHERE ST_Y(geom) BETWEEN ? AND ?
+              AND ST_X(geom) BETWEEN ? AND ?
+            LIMIT ?
+        """
+        results = conn.execute(fallback_q, [q_min_lat, q_max_lat, q_min_lon, q_max_lon, limit]).fetchall()
+    finally:
+        conn.close()
+
+    points = []
+    for r in results:
+        # If importance joined, result has more columns; take first five always
+        points.append({
+            "id": r[0],
+            "name": r[1],
+            "category": r[2],
+            "lat": r[3],
+            "lon": r[4]
+        })
+
     return points
 
 @router.get("/areas", response_model=List[dict])

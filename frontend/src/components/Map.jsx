@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { fetchPOIs, fetchReverseGeocode, fetchIsochrone, fetchLandmarks } from '../services/api';
+import { fetchPointsViewport, fetchReverseGeocode, fetchIsochrone, fetchLandmarks } from '../services/api';
 
 // Delhi center and radius
 const DELHI_CENTER = [77.1025, 28.6139]; // [lng, lat]
@@ -103,6 +103,7 @@ const Map = ({ activeLayers, selectedLocation, mapCenter }) => {
     const isochroneSourceRef = useRef(false);
     const [pois, setPois] = useState([]);
     const [mapLoaded, setMapLoaded] = useState(false);
+    const fetchTimeoutRef = useRef(null);
     const [clickedLocation, setClickedLocation] = useState(null);
     const [isLoadingAddress, setIsLoadingAddress] = useState(false);
     const [showIsochrone, setShowIsochrone] = useState(false);
@@ -253,13 +254,75 @@ const Map = ({ activeLayers, selectedLocation, mapCenter }) => {
         };
     }, []);
 
-    // Load POIs
+    // Compute zoom-based POI limit
+    // Lower zoom (zoomed out) = fewer POIs; higher zoom (zoomed in) = more POIs
+    const getLimitForZoom = useCallback((zoom) => {
+        if (zoom <= 10) return 100;
+        if (zoom <= 12) return 200;
+        if (zoom <= 14) return 400;
+        if (zoom <= 16) return 800;
+        return 1500; // street-level
+    }, []);
+
+    // Fetch POIs for current viewport (debounced)
+    const fetchViewportPOIs = useCallback(() => {
+        if (!map.current || !mapLoaded || !activeLayers.includes('competitors')) {
+            setPois([]);
+            return;
+        }
+
+        // Debounce: clear previous pending fetch
+        if (fetchTimeoutRef.current) {
+            clearTimeout(fetchTimeoutRef.current);
+        }
+
+        fetchTimeoutRef.current = setTimeout(async () => {
+            const bounds = map.current.getBounds();
+            const zoom = map.current.getZoom();
+            const limit = getLimitForZoom(zoom);
+
+            const minLat = bounds.getSouth();
+            const maxLat = bounds.getNorth();
+            const minLon = bounds.getWest();
+            const maxLon = bounds.getEast();
+
+            console.log(`Fetching POIs for viewport: zoom=${zoom.toFixed(1)}, limit=${limit}`);
+            const data = await fetchPointsViewport(minLat, minLon, maxLat, maxLon, limit);
+            if (data) {
+                setPois(data);
+                console.log(`Received ${data.length} POIs`);
+            }
+        }, 150); // 150ms debounce
+    }, [mapLoaded, activeLayers, getLimitForZoom]);
+
+    // Attach moveend listener to refetch POIs on pan/zoom
     useEffect(() => {
+        if (!map.current || !mapLoaded) return;
+
+        const handleMoveEnd = () => {
+            fetchViewportPOIs();
+        };
+
+        map.current.on('moveend', handleMoveEnd);
+
+        // Initial fetch when layer is active and map ready
         if (activeLayers.includes('competitors')) {
-            fetchPOIs().then(data => {
-                if (data) setPois(data);
-            });
-        } else {
+            fetchViewportPOIs();
+        }
+
+        return () => {
+            if (map.current) {
+                map.current.off('moveend', handleMoveEnd);
+            }
+            if (fetchTimeoutRef.current) {
+                clearTimeout(fetchTimeoutRef.current);
+            }
+        };
+    }, [mapLoaded, activeLayers, fetchViewportPOIs]);
+
+    // Clear POIs when competitors layer is disabled
+    useEffect(() => {
+        if (!activeLayers.includes('competitors')) {
             setPois([]);
         }
     }, [activeLayers]);
@@ -272,22 +335,11 @@ const Map = ({ activeLayers, selectedLocation, mapCenter }) => {
         markersRef.current.forEach(m => m.remove());
         markersRef.current = [];
 
-        // Add POI markers - filter to Delhi radius and limit count
-        if (activeLayers.includes('competitors')) {
-            const latRad = DELHI_CENTER[1] * (Math.PI / 180);
-            const kmPerDegLat = 111.32;
-            const kmPerDegLng = 111.32 * Math.cos(latRad);
-            
-            // Filter POIs to only those within Delhi circle
-            const filteredPois = pois.filter(poi => {
-                if (!poi.lat || !poi.lon) return false;
-                const dLat = (poi.lat - DELHI_CENTER[1]) * kmPerDegLat;
-                const dLng = (poi.lon - DELHI_CENTER[0]) * kmPerDegLng;
-                const distKm = Math.sqrt(dLat * dLat + dLng * dLng);
-                return distKm <= RADIUS_KM;
-            }).slice(0, 300); // Limit to 300 markers max for performance
-
-            filteredPois.forEach((poi) => {
+        // Add POI markers - POIs are already filtered/ranked by backend viewport query
+        if (activeLayers.includes('competitors') && pois.length > 0) {
+            pois.forEach((poi) => {
+                if (!poi.lat || !poi.lon) return;
+                
                 const color = getCategoryColor(poi.category);
                 
                 const el = document.createElement('div');
@@ -309,7 +361,7 @@ const Map = ({ activeLayers, selectedLocation, mapCenter }) => {
                 markersRef.current.push(marker);
             });
             
-            console.log(`Rendered ${filteredPois.length} markers (from ${pois.length} total)`);
+            console.log(`Rendered ${pois.length} markers for current viewport`);
         }
     }, [pois, activeLayers, mapLoaded]);
 

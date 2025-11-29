@@ -17,6 +17,28 @@ export const fetchPoints = async (category) => {
 // Backward compatibility alias
 export const fetchPOIs = fetchPoints;
 
+/**
+ * Fetch POIs within a viewport bounding box, ranked by importance.
+ * The backend expands the bbox slightly for smoother panning.
+ * @param {number} minLat - South boundary
+ * @param {number} minLon - West boundary
+ * @param {number} maxLat - North boundary
+ * @param {number} maxLon - East boundary
+ * @param {number} limit - Max POIs to return (default 200)
+ * @param {number} bufferFrac - Fraction to expand bbox (default 0.05)
+ */
+export const fetchPointsViewport = async (minLat, minLon, maxLat, maxLon, limit = 200, bufferFrac = 0.05) => {
+    try {
+        const response = await axios.get(`${API_URL}/points/viewport`, {
+            params: { min_lat: minLat, min_lon: minLon, max_lat: maxLat, max_lon: maxLon, limit, buffer_frac: bufferFrac }
+        });
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching viewport points:", error);
+        return [];
+    }
+};
+
 export const fetchClusters = async (points) => {
     try {
         const response = await axios.post(`${API_URL}/analyze/clusters`, points);
