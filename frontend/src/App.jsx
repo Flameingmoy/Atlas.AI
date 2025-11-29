@@ -1,20 +1,20 @@
 import React, { useState } from 'react';
 import Map from './components/Map';
-import LayerControl from './components/LayerControl';
 import SearchBar from './components/SearchBar';
-import { sendChatMessage, getLocationRecommendations } from './services/api';
-import { Send, Bot, User, Database, Table, X, Tag, Layers, MapPin, Sparkles, TrendingUp } from 'lucide-react';
+import { sendChatMessage, getLocationRecommendations, analyzeAreaOpportunities, getAreaGeometry } from './services/api';
+import { Send, X, Tag, Layers, Sparkles, TrendingUp, MessageSquare, MapPin, Building2, Lightbulb } from 'lucide-react';
 
 function App() {
   const [activeLayers, setActiveLayers] = useState(['competitors']);
   const [chatInput, setChatInput] = useState("");
-  const [chatHistory, setChatHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [mapCenter, setMapCenter] = useState(null);
-  const [filteredPOIs, setFilteredPOIs] = useState(null); // For category/super_category filtering
-  const [activeFilter, setActiveFilter] = useState(null); // Track current filter
-  const [recommendations, setRecommendations] = useState(null); // Business location recommendations
+  const [filteredPOIs, setFilteredPOIs] = useState(null);
+  const [activeFilter, setActiveFilter] = useState(null);
+  const [recommendations, setRecommendations] = useState(null);
+  const [areaAnalysis, setAreaAnalysis] = useState(null);
+  const [sidePanel, setSidePanel] = useState(null);
 
   const toggleLayer = (layer) => {
     setActiveLayers(prev =>
@@ -24,16 +24,13 @@ function App() {
     );
   };
 
-  // Handle location selection from search
   const handleLocationSelect = (location) => {
     setSelectedLocation(location);
     setMapCenter({ lat: location.lat, lon: location.lon, zoom: 15 });
-    // Clear any active filter when navigating to a specific location
     setFilteredPOIs(null);
     setActiveFilter(null);
   };
 
-  // Handle category/super_category selection
   const handleCategorySelect = (filter) => {
     setActiveFilter(filter);
     if (!filter) {
@@ -41,33 +38,28 @@ function App() {
     }
   };
 
-  // Handle POIs loaded from category search
   const handlePOIsLoad = (data) => {
     if (data && data.pois) {
       setFilteredPOIs(data.pois);
-      // Ensure competitors layer is active to show the filtered POIs
       if (!activeLayers.includes('competitors')) {
         setActiveLayers(prev => [...prev, 'competitors']);
       }
     }
   };
 
-  // Clear filter
   const handleClearFilter = () => {
     setFilteredPOIs(null);
     setActiveFilter(null);
   };
 
-  // Clear recommendations
-  const handleClearRecommendations = () => {
+  const closeSidePanel = () => {
+    setSidePanel(null);
     setRecommendations(null);
+    setAreaAnalysis(null);
   };
 
-  // Check if query looks like a business location question
   const isBusinessLocationQuery = (query) => {
     const lowerQuery = query.toLowerCase();
-    
-    // Direct business location patterns
     const locationPatterns = [
       'open a', 'start a', 'open my', 'start my',
       'where should i open', 'where should i start',
@@ -78,8 +70,6 @@ function App() {
       'looking to open', 'looking to start',
       'top areas for', 'top locations for'
     ];
-    
-    // Business types
     const businessWords = [
       'cafe', 'coffee', 'restaurant', 'food', 'bakery', 'tea',
       'shop', 'store', 'retail', 'boutique', 'mall',
@@ -91,18 +81,44 @@ function App() {
       'garage', 'mechanic', 'car wash', 'petrol',
       'business', 'venture', 'enterprise'
     ];
-    
-    // Check for direct patterns
-    if (locationPatterns.some(p => lowerQuery.includes(p))) {
-      return true;
-    }
-    
-    // Check for business word + location intent
+    if (locationPatterns.some(p => lowerQuery.includes(p))) return true;
     const locationIntent = ['location', 'area', 'place', 'where', 'recommend', 'best', 'top', 'ideal', 'suitable'];
-    const hasBusinessWord = businessWords.some(b => lowerQuery.includes(b));
-    const hasLocationIntent = locationIntent.some(l => lowerQuery.includes(l));
-    
-    return hasBusinessWord && hasLocationIntent;
+    return businessWords.some(b => lowerQuery.includes(b)) && locationIntent.some(l => lowerQuery.includes(l));
+  };
+
+  const isAreaAnalysisQuery = (query) => {
+    const lowerQuery = query.toLowerCase();
+    const areaPatterns = [
+      'what.*open.*in', 'what.*start.*in', 'business.*in',
+      'recommend.*in', 'suggest.*in', 'opportunity.*in',
+      'what kind.*in', 'what type.*in', 'gaps.*in'
+    ];
+    const hasAreaPattern = areaPatterns.some(p => new RegExp(p).test(lowerQuery));
+    const areaKeywords = ['hauz khas', 'connaught', 'saket', 'khan market', 'defence colony', 
+      'lajpat', 'karol bagh', 'rajouri', 'dwarka', 'rohini', 'pitampura', 'janakpuri',
+      'vasant', 'greater kailash', 'south ex', 'nehru place', 'malviya'];
+    const hasAreaName = areaKeywords.some(a => lowerQuery.includes(a));
+    return hasAreaPattern || (hasAreaName && (lowerQuery.includes('business') || lowerQuery.includes('open') || lowerQuery.includes('recommend')));
+  };
+
+  const extractAreaName = (query) => {
+    const lowerQuery = query.toLowerCase();
+    const areas = [
+      'hauz khas', 'connaught place', 'saket', 'khan market', 'defence colony',
+      'lajpat nagar', 'karol bagh', 'rajouri garden', 'dwarka', 'rohini',
+      'pitampura', 'janakpuri', 'vasant kunj', 'vasant vihar', 'greater kailash',
+      'south extension', 'nehru place', 'malviya nagar', 'green park', 'safdarjung',
+      'moti bagh', 'punjabi bagh', 'model town', 'civil lines', 'chandni chowk',
+      'paharganj', 'rajender nagar', 'patel nagar', 'tilak nagar',
+      'uttam nagar', 'vikaspuri', 'paschim vihar', 'shalimar bagh', 'prashant vihar',
+      'laxmi nagar', 'preet vihar', 'mayur vihar', 'vasundhara enclave', 'ip extension'
+    ];
+    for (const area of areas) {
+      if (lowerQuery.includes(area)) return area;
+    }
+    const match = query.match(/in\s+([A-Za-z\s]+?)(?:\?|$|,|\.)/i);
+    if (match) return match[1].trim();
+    return null;
   };
 
   const handleChatSubmit = async (e) => {
@@ -111,85 +127,64 @@ function App() {
 
     const userMsg = chatInput;
     setChatInput("");
-    setChatHistory(prev => [...prev, { role: 'user', text: userMsg }]);
     setIsLoading(true);
 
-    // Check if this is a business location query
     if (isBusinessLocationQuery(userMsg)) {
       try {
         const result = await getLocationRecommendations(userMsg, 1.0);
-        
         if (result.success) {
           setRecommendations(result);
-          
-          // Add AI response with recommendations
-          const aiMessage = {
-            role: 'ai',
-            text: result.message,
-            recommendations: result.recommendations
-          };
-          setChatHistory(prev => [...prev, aiMessage]);
-          
-          // If we have recommendations, fly to the first one
-          if (result.recommendations && result.recommendations.length > 0) {
+          setSidePanel({ type: 'recommendation', content: result });
+          if (result.recommendations?.length > 0) {
             const top = result.recommendations[0];
             setMapCenter({ lat: top.centroid.lat, lon: top.centroid.lon, zoom: 12 });
           }
         } else {
-          setChatHistory(prev => [...prev, { 
-            role: 'ai', 
-            text: `Sorry, I couldn't get recommendations: ${result.error || 'Unknown error'}` 
-          }]);
+          setSidePanel({ type: 'error', content: result.error || 'Failed to get recommendations' });
         }
       } catch (error) {
-        console.error("Recommendation error:", error);
-        setChatHistory(prev => [...prev, { 
-          role: 'ai', 
-          text: "Sorry, I encountered an error while getting recommendations." 
-        }]);
+        setSidePanel({ type: 'error', content: 'Error getting recommendations' });
       }
-      setIsLoading(false);
-      return;
-    }
-
-    // Regular chat message
-    const response = await sendChatMessage(userMsg);
-
-    setIsLoading(false);
-    
-    // Add AI response with potential database results
-    const aiMessage = { 
-      role: 'ai', 
-      text: response.text,
-      databaseResult: null
-    };
-    
-    // Check if there's a database query result in actions
-    if (response.actions) {
-      const dbAction = response.actions.find(a => a.type === 'databaseQuery');
-      if (dbAction && dbAction.result) {
-        aiMessage.databaseResult = dbAction.result;
-      }
-    }
-    
-    setChatHistory(prev => [...prev, aiMessage]);
-
-    // Execute Actions
-    if (response.actions) {
-      response.actions.forEach(action => {
-        if (action.type === 'setLayer') {
-          // If layer is not active, add it.
-          // If the user wants to "switch" to it, maybe we should clear others?
-          // For now, let's just ensure it's active.
-          setActiveLayers(prev => {
-            if (!prev.includes(action.layer)) {
-              return [...prev, action.layer];
+    } else if (isAreaAnalysisQuery(userMsg)) {
+      const areaName = extractAreaName(userMsg);
+      if (areaName) {
+        try {
+          const result = await analyzeAreaOpportunities(areaName);
+          if (result.success) {
+            setAreaAnalysis(result);
+            setSidePanel({ type: 'analysis', content: result });
+            if (result.centroid) {
+              setMapCenter({ lat: result.centroid.lat, lon: result.centroid.lon, zoom: 14 });
             }
-            return prev;
-          });
+            const geojson = await getAreaGeometry([result.area]);
+            if (geojson.features?.length > 0) {
+              setRecommendations({ recommendations: [{ area: result.area, centroid: result.centroid }] });
+            }
+          } else {
+            setSidePanel({ type: 'error', content: result.error || 'Failed to analyze area' });
+          }
+        } catch (error) {
+          setSidePanel({ type: 'error', content: 'Could not find area "' + areaName + '"' });
+        }
+      } else {
+        setSidePanel({ type: 'error', content: 'Please specify an area name (e.g., "What business to open in Hauz Khas?")' });
+      }
+    } else {
+      setSidePanel({ 
+        type: 'help', 
+        content: {
+          query: userMsg,
+          message: "I can help you with business location decisions! Try asking:",
+          examples: [
+            "Where should I open a cafe?",
+            "Best location for a gym in Delhi",
+            "What business should I open in Hauz Khas?",
+            "Recommend business opportunities in Saket"
+          ]
         }
       });
     }
+    setIsLoading(false);
   };
 
   return (
@@ -212,24 +207,32 @@ function App() {
       {activeFilter && (
         <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[1000] pointer-events-auto">
           <div className={`flex items-center gap-2 px-4 py-2 rounded-full shadow-lg ${
-            activeFilter.type === 'category' 
-              ? 'bg-purple-600 text-white' 
-              : 'bg-orange-600 text-white'
+            activeFilter.type === 'category' ? 'bg-purple-600 text-white' : 'bg-orange-600 text-white'
           }`}>
             {activeFilter.type === 'category' ? <Tag size={16} /> : <Layers size={16} />}
             <span className="font-medium">{activeFilter.name}</span>
             <span className="opacity-80">({activeFilter.count?.toLocaleString()} places)</span>
-            <button 
-              onClick={handleClearFilter}
-              className="ml-2 hover:bg-white/20 rounded-full p-1"
-            >
+            <button onClick={handleClearFilter} className="ml-2 hover:bg-white/20 rounded-full p-1">
               <X size={16} />
             </button>
           </div>
         </div>
       )}
 
-      <LayerControl activeLayers={activeLayers} toggleLayer={toggleLayer} />
+      {/* Simple Layer Toggle */}
+      <div className="absolute top-4 left-4 bg-white/90 backdrop-blur-sm p-3 rounded-xl shadow-lg border border-gray-200 z-[1000]">
+        <button
+          onClick={() => toggleLayer('competitors')}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+            activeLayers.includes('competitors')
+              ? 'bg-blue-50 text-blue-700 border border-blue-200'
+              : 'hover:bg-gray-50 text-gray-600 border border-transparent'
+          }`}
+        >
+          <MapPin size={16} />
+          Show POIs
+        </button>
+      </div>
 
       <Map 
         activeLayers={activeLayers} 
@@ -239,146 +242,177 @@ function App() {
         recommendations={recommendations}
       />
 
-      {/* Recommendations Panel */}
-      {recommendations && recommendations.recommendations && recommendations.recommendations.length > 0 && (
-        <div className="absolute top-24 left-4 z-[1000] bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200 p-4 max-w-sm">
-          <div className="flex items-center justify-between mb-3">
+      {/* Side Panel for Results */}
+      {sidePanel && (
+        <div className="absolute top-20 right-4 bottom-24 w-96 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200 z-[1000] flex flex-col overflow-hidden">
+          {/* Panel Header */}
+          <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
             <div className="flex items-center gap-2">
-              <Sparkles className="text-amber-500" size={20} />
-              <h3 className="font-bold text-gray-800">Top Locations for {recommendations.business_type}</h3>
+              {sidePanel.type === 'recommendation' && <Sparkles className="text-amber-500" size={20} />}
+              {sidePanel.type === 'analysis' && <Lightbulb className="text-green-500" size={20} />}
+              {sidePanel.type === 'help' && <MessageSquare className="text-blue-500" size={20} />}
+              {sidePanel.type === 'error' && <X className="text-red-500" size={20} />}
+              <h3 className="font-bold text-gray-800">
+                {sidePanel.type === 'recommendation' && 'Location Recommendations'}
+                {sidePanel.type === 'analysis' && 'Business Opportunities'}
+                {sidePanel.type === 'help' && 'How to Use'}
+                {sidePanel.type === 'error' && 'Oops!'}
+              </h3>
             </div>
-            <button 
-              onClick={handleClearRecommendations}
-              className="hover:bg-gray-100 rounded-full p-1"
-            >
+            <button onClick={closeSidePanel} className="hover:bg-gray-200 rounded-full p-1">
               <X size={18} className="text-gray-500" />
             </button>
           </div>
-          
-          <div className="text-xs text-gray-500 mb-3 flex items-center gap-1">
-            <TrendingUp size={12} />
-            <span>{recommendations.super_category}</span>
-          </div>
-          
-          <div className="space-y-3">
-            {recommendations.recommendations.slice(0, 3).map((rec, idx) => (
-              <div 
-                key={rec.area}
-                className={`p-3 rounded-xl cursor-pointer transition-all ${
-                  idx === 0 ? 'bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300' :
-                  idx === 1 ? 'bg-gradient-to-r from-gray-50 to-slate-50 border border-gray-200' :
-                  'bg-gray-50 border border-gray-100'
-                }`}
-                onClick={() => {
-                  setMapCenter({ lat: rec.centroid.lat, lon: rec.centroid.lon, zoom: 14 });
-                }}
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                    idx === 0 ? 'bg-amber-400 text-white' :
-                    idx === 1 ? 'bg-gray-400 text-white' :
-                    'bg-gray-300 text-white'
-                  }`}>{idx + 1}</span>
-                  <span className="font-semibold text-gray-800">{rec.area}</span>
+
+          {/* Panel Content */}
+          <div className="flex-1 overflow-y-auto p-4">
+            {/* Error */}
+            {sidePanel.type === 'error' && (
+              <div className="text-red-600 bg-red-50 p-4 rounded-lg">
+                {sidePanel.content}
+              </div>
+            )}
+
+            {/* Help */}
+            {sidePanel.type === 'help' && (
+              <div className="space-y-4">
+                <p className="text-gray-600">{sidePanel.content.message}</p>
+                <div className="space-y-2">
+                  {sidePanel.content.examples.map((ex, idx) => (
+                    <div 
+                      key={idx}
+                      onClick={() => setChatInput(ex)}
+                      className="p-3 bg-blue-50 rounded-lg text-blue-700 cursor-pointer hover:bg-blue-100 transition-colors"
+                    >
+                      "{ex}"
+                    </div>
+                  ))}
                 </div>
-                
-                <div className="ml-8 space-y-1">
-                  <div className="flex items-center gap-4 text-xs">
-                    <span className="text-gray-600">
-                      <span className="font-medium text-blue-600">{rec.composite_score}</span>/100 Score
-                    </span>
+              </div>
+            )}
+
+            {/* Location Recommendations */}
+            {sidePanel.type === 'recommendation' && sidePanel.content && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <Building2 size={14} />
+                  <span>{sidePanel.content.business_type} • {sidePanel.content.super_category}</span>
+                </div>
+
+                <div className="space-y-3">
+                  {sidePanel.content.recommendations?.slice(0, 3).map((rec, idx) => (
+                    <div 
+                      key={rec.area}
+                      className={`p-4 rounded-xl cursor-pointer transition-all ${
+                        idx === 0 ? 'bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300' :
+                        idx === 1 ? 'bg-gradient-to-r from-gray-50 to-slate-50 border border-gray-200' :
+                        'bg-gray-50 border border-gray-100'
+                      }`}
+                      onClick={() => setMapCenter({ lat: rec.centroid.lat, lon: rec.centroid.lon, zoom: 14 })}
+                    >
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-xl">{['🥇', '🥈', '🥉'][idx]}</span>
+                        <span className="font-bold text-gray-800">{rec.area}</span>
+                        <span className="ml-auto text-lg font-bold text-blue-600">{rec.composite_score}</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 text-xs">
+                        <div className="bg-white/50 rounded p-2 text-center">
+                          <div className="text-gray-500">Base</div>
+                          <div className="font-semibold">{rec.area_score}</div>
+                        </div>
+                        <div className="bg-white/50 rounded p-2 text-center">
+                          <div className="text-gray-500">Opportunity</div>
+                          <div className="font-semibold">{rec.opportunity_score}</div>
+                        </div>
+                        <div className="bg-white/50 rounded p-2 text-center">
+                          <div className="text-gray-500">Ecosystem</div>
+                          <div className="font-semibold">{rec.ecosystem_score}</div>
+                        </div>
+                      </div>
+                      <div className="mt-2 text-xs text-gray-500">
+                        {rec.competitors} competitors • {rec.complementary} complementary
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {sidePanel.content.complementary_categories && (
+                  <div className="mt-4 p-3 bg-green-50 rounded-lg">
+                    <div className="text-xs font-semibold text-green-700 mb-1">Complementary Categories</div>
+                    <div className="flex flex-wrap gap-1">
+                      {sidePanel.content.complementary_categories.map(cat => (
+                        <span key={cat} className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs">{cat}</span>
+                      ))}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 text-xs text-gray-500">
-                    <span>📊 {rec.area_score} base</span>
-                    <span>🎯 {rec.opportunity_score} opportunity</span>
-                    <span>🏪 {rec.ecosystem_score} ecosystem</span>
+                )}
+              </div>
+            )}
+
+            {/* Area Analysis */}
+            {sidePanel.type === 'analysis' && sidePanel.content && (
+              <div className="space-y-4">
+                <div className="text-center p-3 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg">
+                  <div className="text-2xl font-bold text-gray-800">{sidePanel.content.area}</div>
+                  <div className="text-sm text-gray-500">{sidePanel.content.total_pois} total businesses</div>
+                </div>
+
+                {/* Dominant Categories */}
+                <div>
+                  <div className="text-sm font-semibold text-gray-700 mb-2">Current Business Landscape</div>
+                  <div className="flex flex-wrap gap-2">
+                    {sidePanel.content.dominant_categories?.map(cat => (
+                      <div key={cat.category} className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs">
+                        {cat.category}: {cat.count}
+                      </div>
+                    ))}
                   </div>
-                  <div className="text-xs text-gray-400">
-                    {rec.competitors} competitors • {rec.complementary} complementary
+                </div>
+
+                {/* Recommendations */}
+                <div>
+                  <div className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                    <Lightbulb size={16} className="text-amber-500" />
+                    Recommended Business Categories
+                  </div>
+                  <div className="space-y-3">
+                    {sidePanel.content.recommendations?.map((rec, idx) => (
+                      <div key={rec.category} className={`p-3 rounded-lg border ${
+                        rec.type === 'gap' ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'
+                      }`}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-bold text-gray-800">{idx + 1}. {rec.category}</span>
+                          <span className={`text-xs px-2 py-0.5 rounded ${
+                            rec.type === 'gap' ? 'bg-blue-200 text-blue-700' : 'bg-green-200 text-green-700'
+                          }`}>
+                            {rec.type === 'gap' ? 'Market Gap' : 'Complementary'}
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-600 mb-2">{rec.reason}</div>
+                        <div className="flex flex-wrap gap-1">
+                          {rec.examples?.map(ex => (
+                            <span key={ex} className="px-2 py-0.5 bg-white rounded text-xs text-gray-600">{ex}</span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
-          
-          <div className="mt-3 text-xs text-gray-400 text-center">
-            Click an area to view on map
+            )}
           </div>
         </div>
       )}
 
-      {/* Chat Interface */}
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-[1000] flex flex-col gap-2">
-
-        {/* Chat History (Only show last few messages) */}
-        {chatHistory.length > 0 && (
-          <div className="bg-white/90 backdrop-blur-md rounded-2xl shadow-xl border border-gray-200 p-4 max-h-60 overflow-y-auto mb-2">
-            {chatHistory.map((msg, idx) => (
-              <div key={idx} className={`flex flex-col gap-2 mb-3 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                <div className={`p-3 rounded-lg text-sm max-w-[80%] ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'}`}>
-                  {msg.text}
-                </div>
-                
-                {/* Database Query Results */}
-                {msg.databaseResult && msg.databaseResult.success && (
-                  <div className="bg-white border border-gray-300 rounded-lg p-3 max-w-[90%] text-xs">
-                    <div className="flex items-center gap-2 mb-2 text-gray-600">
-                      <Database size={14} />
-                      <span className="font-semibold">Query Results ({msg.databaseResult.row_count} rows)</span>
-                    </div>
-                    
-                    {/* Show SQL Query */}
-                    <div className="bg-gray-50 p-2 rounded mb-2 font-mono text-xs text-gray-700 overflow-x-auto">
-                      {msg.databaseResult.sql}
-                    </div>
-                    
-                    {/* Show Data Table (first 10 rows) */}
-                    {msg.databaseResult.results && msg.databaseResult.results.length > 0 && (
-                      <div className="overflow-x-auto max-h-48 overflow-y-auto">
-                        <table className="min-w-full text-xs border-collapse">
-                          <thead className="bg-gray-100 sticky top-0">
-                            <tr>
-                              {Object.keys(msg.databaseResult.results[0]).map((key) => (
-                                <th key={key} className="border border-gray-300 px-2 py-1 text-left font-semibold">
-                                  {key}
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {msg.databaseResult.results.slice(0, 10).map((row, rowIdx) => (
-                              <tr key={rowIdx} className="hover:bg-gray-50">
-                                {Object.values(row).map((val, colIdx) => (
-                                  <td key={colIdx} className="border border-gray-300 px-2 py-1">
-                                    {val !== null && val !== undefined ? String(val) : 'null'}
-                                  </td>
-                                ))}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                        {msg.databaseResult.results.length > 10 && (
-                          <div className="text-center text-gray-500 mt-2 text-xs">
-                            Showing 10 of {msg.databaseResult.results.length} rows
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-            {isLoading && <div className="text-xs text-gray-500 italic">Atlas is thinking...</div>}
-          </div>
-        )}
-
-        <form onSubmit={handleChatSubmit} className="bg-white/90 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200 p-2 flex gap-2">
+      {/* Chat Input */}
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-[1000]">
+        <form onSubmit={handleChatSubmit} className="bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200 p-2 flex gap-2">
           <input
             type="text"
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
-            placeholder="Ask Atlas: 'Show me all restaurants in Delhi' or 'What areas exist?'"
-            className="flex-1 bg-transparent border-none outline-none px-4 py-3 text-gray-800 placeholder-gray-500"
+            placeholder="Ask: 'Where to open a cafe?' or 'What business in Hauz Khas?'"
+            className="flex-1 bg-transparent border-none outline-none px-4 py-3 text-gray-800 placeholder-gray-400"
           />
           <button
             type="submit"

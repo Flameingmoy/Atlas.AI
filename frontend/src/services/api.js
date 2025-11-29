@@ -463,6 +463,21 @@ export const getAreaGeometry = async (names) => {
     }
 };
 
+/**
+ * Analyze what businesses to open in a specific area
+ * @param {string} area - Area name like "Hauz Khas"
+ * @returns {Promise<object>} Analysis with recommendations
+ */
+export const analyzeAreaOpportunities = async (area) => {
+    try {
+        const response = await axios.post(`${API_URL}/analyze/area`, { area });
+        return response.data;
+    } catch (error) {
+        console.error("Error analyzing area:", error);
+        throw error;
+    }
+};
+
 // Export cache for debugging/monitoring
 export const getCacheStats = () => ({
     general: { size: cache.size, maxSize: cache.maxSize },

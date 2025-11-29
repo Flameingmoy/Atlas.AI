@@ -766,3 +766,37 @@ def get_area_geometry(names: str):
     return {"type": "FeatureCollection", "features": features}
 
 
+# ============================================
+# Area Business Analysis (What to open in X area)
+# ============================================
+
+class AreaAnalysisRequest(BaseModel):
+    area: str
+
+@router.post("/analyze/area")
+def analyze_area_opportunities(request: AreaAnalysisRequest):
+    """
+    Analyze what businesses would be good to open in a specific area.
+    
+    Looks at:
+    - Gap analysis (underserved business categories vs Delhi average)
+    - Complementary opportunities (businesses that complement existing ones)
+    
+    Returns top 5 recommended business categories with examples.
+    """
+    try:
+        from app.services.area_business_analyzer import get_area_analyzer
+        analyzer = get_area_analyzer()
+        result = analyzer.analyze_area(request.area)
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error", "Analysis failed"))
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error analyzing area: {str(e)}")
+
+
+
