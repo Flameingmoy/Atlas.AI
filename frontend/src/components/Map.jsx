@@ -742,6 +742,35 @@ const Map = ({ activeLayers, selectedLocation, mapCenter, filteredPOIs, recommen
         }
     }, [selectedLocation, mapLoaded]);
 
+    // Helper function to create a circle GeoJSON polygon
+    const createCircleGeoJSON = (center, radiusKm, name) => {
+        const points = 64;
+        const coords = [];
+        const earthRadius = 6371; // km
+        
+        for (let i = 0; i <= points; i++) {
+            const angle = (i / points) * 2 * Math.PI;
+            const dx = radiusKm * Math.cos(angle);
+            const dy = radiusKm * Math.sin(angle);
+            
+            const lat = center.lat + (dy / earthRadius) * (180 / Math.PI);
+            const lon = center.lon + (dx / earthRadius) * (180 / Math.PI) / Math.cos(center.lat * Math.PI / 180);
+            coords.push([lon, lat]);
+        }
+        
+        return {
+            type: 'FeatureCollection',
+            features: [{
+                type: 'Feature',
+                properties: { name, rank: 0, color: '#3B82F6' },
+                geometry: {
+                    type: 'Polygon',
+                    coordinates: [coords]
+                }
+            }]
+        };
+    };
+
     // Handle recommendation markers and area highlighting
     useEffect(() => {
         if (!map.current || !mapLoaded) return;
@@ -761,27 +790,36 @@ const Map = ({ activeLayers, selectedLocation, mapCenter, filteredPOIs, recommen
         if (recommendations && recommendations.recommendations && recommendations.recommendations.length > 0) {
             const colors = ['#F59E0B', '#9CA3AF', '#D97706']; // Gold, Silver, Bronze
             const ranks = ['🥇', '🥈', '🥉'];
+            const isAreaAnalysis = recommendations.recommendations[0]?._isAreaAnalysis;
+            const firstRec = recommendations.recommendations[0];
 
-            // Fetch and display area polygons
-            const areaNames = recommendations.recommendations.slice(0, 3).map(r => r.area);
-            getAreaGeometry(areaNames).then(geojson => {
-                if (map.current && geojson.features && geojson.features.length > 0) {
-                    // Add rank color to each feature
-                    geojson.features.forEach(feature => {
-                        const idx = areaNames.indexOf(feature.properties.name);
-                        feature.properties.rank = idx;
-                        feature.properties.color = colors[idx] || '#F59E0B';
-                    });
-                    
-                    if (map.current.getSource('recommended-areas')) {
-                        map.current.getSource('recommended-areas').setData(geojson);
-                    }
+            // Handle area highlighting differently based on source
+            if (isAreaAnalysis && firstRec.location_source === 'poi' && firstRec.radius_km && firstRec.centroid) {
+                // POI-based location: draw a circle
+                const circleGeoJSON = createCircleGeoJSON(firstRec.centroid, firstRec.radius_km, firstRec.area);
+                if (map.current.getSource('recommended-areas')) {
+                    map.current.getSource('recommended-areas').setData(circleGeoJSON);
                 }
-            });
+            } else {
+                // Area-based: fetch polygon from API
+                const areaNames = recommendations.recommendations.slice(0, 3).map(r => r.area);
+                getAreaGeometry(areaNames).then(geojson => {
+                    if (map.current && geojson.features && geojson.features.length > 0) {
+                        // Add rank color to each feature
+                        geojson.features.forEach(feature => {
+                            const idx = areaNames.indexOf(feature.properties.name);
+                            feature.properties.rank = idx;
+                            feature.properties.color = colors[idx] || '#F59E0B';
+                        });
+                        
+                        if (map.current.getSource('recommended-areas')) {
+                            map.current.getSource('recommended-areas').setData(geojson);
+                        }
+                    }
+                });
+            }
 
             // Only show medal markers for location recommendations, not area analysis
-            const isAreaAnalysis = recommendations.recommendations[0]?._isAreaAnalysis;
-            
             if (!isAreaAnalysis) {
                 recommendations.recommendations.slice(0, 3).forEach((rec, idx) => {
                     if (!rec.centroid) return;

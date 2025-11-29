@@ -157,11 +157,14 @@ function App() {
             if (result.centroid) {
               setMapCenter({ lat: result.centroid.lat, lon: result.centroid.lon, zoom: 14 });
             }
-            // Set recommendations with area info for polygon highlighting (no medal markers)
+            // Set recommendations with area info for polygon/circle highlighting (no medal markers)
             setRecommendations({ 
               recommendations: [{ 
                 area: result.area, 
                 centroid: result.centroid,
+                // For POI-based locations, include radius for circle drawing
+                location_source: result.location_source,
+                radius_km: result.radius_km,
                 // These prevent medal marker from showing undefined
                 composite_score: null,
                 competitors: null,

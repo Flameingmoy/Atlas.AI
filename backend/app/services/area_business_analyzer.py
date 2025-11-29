@@ -321,6 +321,8 @@ class AreaBusinessAnalyzer:
             "success": True,
             "area": actual_area,
             "centroid": centroid,
+            "location_source": location_source,  # "area" or "poi"
+            "radius_km": 1.0 if location_source == "poi" else None,  # radius used for POI-based analysis
             "total_pois": total_pois,
             "dominant_categories": [{"category": d[0], "count": d[1]} for d in dominant],
             "recommendations": top_recommendations,
