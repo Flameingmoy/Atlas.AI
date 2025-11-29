@@ -18,5 +18,5 @@ dist/
 coverage/
 
 # Data
-*.json
+data/blue_essence.json
 *.geojson
