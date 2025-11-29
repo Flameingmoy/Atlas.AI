@@ -61,6 +61,7 @@ def init_postgis_schema(pg_conn):
     
     # Drop existing tables to ensure clean migration
     tables = [
+        'points_super', 'points_pincode', 'points_in_city',
         'points_area', 'area_scores', 'area_with_centroid',
         'delhi_points', 'delhi_pincode', 'delhi_area', 'delhi_city'
     ]
@@ -142,6 +143,38 @@ def init_postgis_schema(pg_conn):
             category VARCHAR(255),
             geom GEOMETRY(POINT, 4326),
             area VARCHAR(255)
+        );
+    """)
+    
+    # Create points_in_city table (points within city boundary, no extra columns)
+    cursor.execute("""
+        CREATE TABLE points_in_city (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(500),
+            category VARCHAR(255),
+            geom GEOMETRY(POINT, 4326)
+        );
+    """)
+    
+    # Create points_pincode table
+    cursor.execute("""
+        CREATE TABLE points_pincode (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(500),
+            category VARCHAR(255),
+            geom GEOMETRY(POINT, 4326),
+            pincode VARCHAR(50)
+        );
+    """)
+    
+    # Create points_super table (points with super_category)
+    cursor.execute("""
+        CREATE TABLE points_super (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(500),
+            category VARCHAR(255),
+            geom GEOMETRY(POINT, 4326),
+            super_category VARCHAR(255)
         );
     """)
     
@@ -348,6 +381,126 @@ def migrate_points_area(duck_conn, pg_conn):
         return 0
 
 
+def migrate_points_in_city(duck_conn, pg_conn):
+    """Migrate pointsInCity table."""
+    cursor = pg_conn.cursor()
+    
+    try:
+        query = """
+            SELECT id, name, category, ST_AsText(geom) as geom_wkt 
+            FROM pointsInCity
+        """
+        rows = duck_conn.execute(query).fetchall()
+        
+        if not rows:
+            print("  No data in pointsInCity")
+            return 0
+        
+        values = []
+        for row in rows:
+            id_val, name, category, geom_wkt = row
+            if geom_wkt:
+                values.append((id_val, name, category, f"SRID=4326;{geom_wkt}"))
+        
+        if values:
+            execute_values(
+                cursor,
+                "INSERT INTO points_in_city (id, name, category, geom) VALUES %s",
+                values,
+                template="(%s, %s, %s, ST_GeomFromEWKT(%s))",
+                page_size=5000
+            )
+        
+        pg_conn.commit()
+        print(f"  Migrated {len(values)} rows from pointsInCity -> points_in_city")
+        return len(values)
+        
+    except Exception as e:
+        print(f"  Error migrating pointsInCity: {e}")
+        pg_conn.rollback()
+        return 0
+
+
+def migrate_points_pincode(duck_conn, pg_conn):
+    """Migrate pointsPincode table."""
+    cursor = pg_conn.cursor()
+    
+    try:
+        query = """
+            SELECT id, name, category, ST_AsText(geom) as geom_wkt, pincode 
+            FROM pointsPincode
+        """
+        rows = duck_conn.execute(query).fetchall()
+        
+        if not rows:
+            print("  No data in pointsPincode")
+            return 0
+        
+        values = []
+        for row in rows:
+            id_val, name, category, geom_wkt, pincode = row
+            if geom_wkt:
+                values.append((id_val, name, category, f"SRID=4326;{geom_wkt}", pincode))
+        
+        if values:
+            execute_values(
+                cursor,
+                "INSERT INTO points_pincode (id, name, category, geom, pincode) VALUES %s",
+                values,
+                template="(%s, %s, %s, ST_GeomFromEWKT(%s), %s)",
+                page_size=5000
+            )
+        
+        pg_conn.commit()
+        print(f"  Migrated {len(values)} rows from pointsPincode -> points_pincode")
+        return len(values)
+        
+    except Exception as e:
+        print(f"  Error migrating pointsPincode: {e}")
+        pg_conn.rollback()
+        return 0
+
+
+def migrate_points_super(duck_conn, pg_conn):
+    """Migrate pointsSuper table."""
+    cursor = pg_conn.cursor()
+    
+    try:
+        query = """
+            SELECT id, name, category, ST_AsText(geom) as geom_wkt, super_category 
+            FROM pointsSuper
+        """
+        rows = duck_conn.execute(query).fetchall()
+        
+        if not rows:
+            print("  No data in pointsSuper")
+            return 0
+        
+        values = []
+        for row in rows:
+            id_val, name, category, geom_wkt, super_category = row
+            if geom_wkt:
+                values.append((id_val, name, category, f"SRID=4326;{geom_wkt}", super_category))
+        
+        if values:
+            execute_values(
+                cursor,
+                "INSERT INTO points_super (id, name, category, geom, super_category) VALUES %s",
+                values,
+                template="(%s, %s, %s, ST_GeomFromEWKT(%s), %s)",
+                page_size=5000
+            )
+        
+        pg_conn.commit()
+        print(f"  Migrated {len(values)} rows from pointsSuper -> points_super")
+        return len(values)
+        
+    except Exception as e:
+        print(f"  Error migrating pointsSuper: {e}")
+        pg_conn.rollback()
+        return 0
+
+
 def create_spatial_indexes(pg_conn):
     """Create spatial and regular indexes for performance."""
     cursor = pg_conn.cursor()
@@ -358,10 +511,15 @@ def create_spatial_indexes(pg_conn):
         "CREATE INDEX IF NOT EXISTS idx_delhi_pincode_geom ON delhi_pincode USING GIST(geom);",
         "CREATE INDEX IF NOT EXISTS idx_delhi_points_geom ON delhi_points USING GIST(geom);",
         "CREATE INDEX IF NOT EXISTS idx_points_area_geom ON points_area USING GIST(geom);",
+        "CREATE INDEX IF NOT EXISTS idx_points_in_city_geom ON points_in_city USING GIST(geom);",
+        "CREATE INDEX IF NOT EXISTS idx_points_pincode_geom ON points_pincode USING GIST(geom);",
+        "CREATE INDEX IF NOT EXISTS idx_points_super_geom ON points_super USING GIST(geom);",
         "CREATE INDEX IF NOT EXISTS idx_area_with_centroid_name ON area_with_centroid(LOWER(name));",
         "CREATE INDEX IF NOT EXISTS idx_area_scores_name ON area_scores(name);",
         "CREATE INDEX IF NOT EXISTS idx_points_area_area ON points_area(area);",
         "CREATE INDEX IF NOT EXISTS idx_delhi_points_category ON delhi_points(category);",
+        "CREATE INDEX IF NOT EXISTS idx_points_pincode_pincode ON points_pincode(pincode);",
+        "CREATE INDEX IF NOT EXISTS idx_points_super_super_category ON points_super(super_category);",
     ]
     
     for idx_sql in indexes:
@@ -408,6 +566,9 @@ def run_migration():
     migrate_area_with_centroid(duck_conn, pg_conn)
     migrate_area_scores(duck_conn, pg_conn)
     migrate_points_area(duck_conn, pg_conn)
+    migrate_points_in_city(duck_conn, pg_conn)
+    migrate_points_pincode(duck_conn, pg_conn)
+    migrate_points_super(duck_conn, pg_conn)
     
     print("\nCreating indexes...")
     create_spatial_indexes(pg_conn)
@@ -417,7 +578,8 @@ def run_migration():
     cursor = pg_conn.cursor()
     tables = [
         'delhi_city', 'delhi_area', 'delhi_pincode', 'delhi_points',
-        'area_with_centroid', 'area_scores', 'points_area'
+        'area_with_centroid', 'area_scores', 'points_area',
+        'points_in_city', 'points_pincode', 'points_super'
     ]
     for table in tables:
         cursor.execute(f"SELECT COUNT(*) FROM {table}")
