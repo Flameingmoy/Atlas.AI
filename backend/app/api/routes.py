@@ -15,18 +15,30 @@ def health_check():
     return {"status": "ok", "version": "0.1.0", "db": "duckdb"}
 
 @router.get("/points", response_model=List[dict])
-def get_points(category: Optional[str] = None):
+def get_points(category: Optional[str] = None, limit: int = 500):
     """
-    Get points of interest from delhi_points table
+    Get points of interest from delhi_points table.
+    Only returns points within Delhi bounds and limited to prevent memory issues.
     """
     conn = get_db_connection()
     
-    query = "SELECT id, name, category, ST_Y(geom) as lat, ST_X(geom) as lon FROM delhi_points"
-    params = []
+    # Delhi bounding box (approximate)
+    min_lat, max_lat = 28.4, 28.9
+    min_lon, max_lon = 76.8, 77.4
+    
+    query = """
+        SELECT id, name, category, ST_Y(geom) as lat, ST_X(geom) as lon 
+        FROM delhi_points
+        WHERE ST_Y(geom) BETWEEN ? AND ?
+        AND ST_X(geom) BETWEEN ? AND ?
+    """
+    params = [min_lat, max_lat, min_lon, max_lon]
     
     if category:
-        query += " WHERE category = ?"
+        query += " AND category = ?"
         params.append(category)
+    
+    query += f" LIMIT {limit}"
         
     results = conn.execute(query, params).fetchall()
     conn.close()
