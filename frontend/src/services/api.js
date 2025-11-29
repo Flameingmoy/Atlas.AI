@@ -412,6 +412,57 @@ export const fetchIsochrone = async (lat, lon, distance = 1.0) => {
     }
 };
 
+// ============================================
+// Business Location Recommendation
+// ============================================
+
+/**
+ * Get business location recommendations
+ * @param {string} query - Natural language query like "I want to open a cafe"
+ * @param {number} radiusKm - Analysis radius in km (default 1.0)
+ * @returns {Promise<object>} Recommendations with top 3 areas
+ */
+export const getLocationRecommendations = async (query, radiusKm = 1.0) => {
+    try {
+        const response = await axios.post(`${API_URL}/recommend/location`, {
+            query,
+            radius_km: radiusKm
+        });
+        return response.data;
+    } catch (error) {
+        console.error("Error getting location recommendations:", error);
+        throw error;
+    }
+};
+
+/**
+ * Get list of valid super categories for recommendations
+ */
+export const getRecommendCategories = async () => {
+    try {
+        return await cachedGet(`${API_URL}/recommend/categories`, {}, staticCache);
+    } catch (error) {
+        console.error("Error fetching recommendation categories:", error);
+        return { categories: [] };
+    }
+};
+
+/**
+ * Get GeoJSON polygons for area names (for highlighting recommended areas)
+ * @param {string[]} names - Array of area names
+ * @returns {Promise<object>} GeoJSON FeatureCollection
+ */
+export const getAreaGeometry = async (names) => {
+    if (!names || names.length === 0) return { type: "FeatureCollection", features: [] };
+    try {
+        const namesStr = names.join(',');
+        return await cachedGet(`${API_URL}/areas/geometry`, { names: namesStr }, cache, 5 * 60 * 1000);
+    } catch (error) {
+        console.error("Error fetching area geometry:", error);
+        return { type: "FeatureCollection", features: [] };
+    }
+};
+
 // Export cache for debugging/monitoring
 export const getCacheStats = () => ({
     general: { size: cache.size, maxSize: cache.maxSize },
@@ -425,3 +476,4 @@ export const clearAllCaches = () => {
     staticCache.clear();
     console.log('[Cache] All caches cleared');
 };
+

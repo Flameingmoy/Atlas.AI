@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { fetchPointsViewport, fetchReverseGeocode, fetchIsochrone, fetchLandmarks } from '../services/api';
+import { fetchPointsViewport, fetchReverseGeocode, fetchIsochrone, fetchLandmarks, getAreaGeometry } from '../services/api';
 
 // Delhi center and radius
 const DELHI_CENTER = [77.1025, 28.6139]; // [lng, lat]
@@ -146,12 +146,13 @@ const getCategoryType = (category) => {
     return 'other';
 };
 
-const Map = ({ activeLayers, selectedLocation, mapCenter, filteredPOIs }) => {
+const Map = ({ activeLayers, selectedLocation, mapCenter, filteredPOIs, recommendations }) => {
     const mapContainer = useRef(null);
     const map = useRef(null);
     const markersRef = useRef([]);
     const selectedMarkerRef = useRef(null);
     const isochroneSourceRef = useRef(false);
+    const recommendationMarkersRef = useRef([]);
     const [pois, setPois] = useState([]);
     const [mapLoaded, setMapLoaded] = useState(false);
     const fetchTimeoutRef = useRef(null);
@@ -249,6 +250,37 @@ const Map = ({ activeLayers, selectedLocation, mapCenter, filteredPOIs }) => {
                 paint: {
                     'line-color': '#3B82F6',
                     'line-width': 2
+                }
+            });
+
+            // Add recommended areas source and layers (for business location recommendations)
+            map.current.addSource('recommended-areas', {
+                type: 'geojson',
+                data: {
+                    type: 'FeatureCollection',
+                    features: []
+                }
+            });
+
+            // Fill layer with rank-based coloring
+            map.current.addLayer({
+                id: 'recommended-areas-fill',
+                type: 'fill',
+                source: 'recommended-areas',
+                paint: {
+                    'fill-color': ['get', 'color'],
+                    'fill-opacity': 0.3
+                }
+            });
+
+            // Outline layer
+            map.current.addLayer({
+                id: 'recommended-areas-outline',
+                type: 'line',
+                source: 'recommended-areas',
+                paint: {
+                    'line-color': ['get', 'color'],
+                    'line-width': 3
                 }
             });
 
@@ -709,6 +741,103 @@ const Map = ({ activeLayers, selectedLocation, mapCenter, filteredPOIs }) => {
             selectedMarkerRef.current = marker;
         }
     }, [selectedLocation, mapLoaded]);
+
+    // Handle recommendation markers and area highlighting
+    useEffect(() => {
+        if (!map.current || !mapLoaded) return;
+
+        // Remove previous recommendation markers
+        recommendationMarkersRef.current.forEach(m => m.remove());
+        recommendationMarkersRef.current = [];
+
+        // Clear previous area highlights
+        if (map.current.getSource('recommended-areas')) {
+            map.current.getSource('recommended-areas').setData({
+                type: 'FeatureCollection',
+                features: []
+            });
+        }
+
+        if (recommendations && recommendations.recommendations && recommendations.recommendations.length > 0) {
+            const colors = ['#F59E0B', '#9CA3AF', '#D97706']; // Gold, Silver, Bronze
+            const ranks = ['🥇', '🥈', '🥉'];
+
+            // Fetch and display area polygons
+            const areaNames = recommendations.recommendations.slice(0, 3).map(r => r.area);
+            getAreaGeometry(areaNames).then(geojson => {
+                if (map.current && geojson.features && geojson.features.length > 0) {
+                    // Add rank color to each feature
+                    geojson.features.forEach(feature => {
+                        const idx = areaNames.indexOf(feature.properties.name);
+                        feature.properties.rank = idx;
+                        feature.properties.color = colors[idx] || '#F59E0B';
+                    });
+                    
+                    if (map.current.getSource('recommended-areas')) {
+                        map.current.getSource('recommended-areas').setData(geojson);
+                    }
+                }
+            });
+
+            recommendations.recommendations.slice(0, 3).forEach((rec, idx) => {
+                if (!rec.centroid) return;
+
+                // Create distinctive marker element
+                const el = document.createElement('div');
+                el.style.width = '40px';
+                el.style.height = '40px';
+                el.style.backgroundColor = colors[idx];
+                el.style.borderRadius = '50%';
+                el.style.border = '3px solid white';
+                el.style.boxShadow = '0 2px 15px rgba(0,0,0,0.4)';
+                el.style.cursor = 'pointer';
+                el.style.display = 'flex';
+                el.style.alignItems = 'center';
+                el.style.justifyContent = 'center';
+                el.style.fontSize = '18px';
+                el.innerHTML = ranks[idx];
+
+                const popupContent = `
+                    <div style="color:#333; min-width:180px;">
+                        <div style="font-weight:bold; font-size:14px; margin-bottom:4px;">
+                            ${ranks[idx]} ${rec.area}
+                        </div>
+                        <div style="font-size:12px; color:#666; margin-bottom:4px;">
+                            Score: <span style="font-weight:bold; color:#2563EB;">${rec.composite_score}/100</span>
+                        </div>
+                        <div style="font-size:11px; color:#888;">
+                            ${rec.competitors} competitors • ${rec.complementary} complementary
+                        </div>
+                    </div>
+                `;
+
+                const marker = new maplibregl.Marker({ element: el })
+                    .setLngLat([rec.centroid.lon, rec.centroid.lat])
+                    .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(popupContent))
+                    .addTo(map.current);
+
+                // Show popup for top recommendation
+                if (idx === 0) {
+                    marker.togglePopup();
+                }
+
+                recommendationMarkersRef.current.push(marker);
+            });
+
+            // Fit map to show all recommendation markers
+            if (recommendations.recommendations.length > 1) {
+                const bounds = new maplibregl.LngLatBounds();
+                recommendations.recommendations.slice(0, 3).forEach(rec => {
+                    if (rec.centroid) {
+                        bounds.extend([rec.centroid.lon, rec.centroid.lat]);
+                    }
+                });
+                if (!bounds.isEmpty()) {
+                    map.current.fitBounds(bounds, { padding: 80, maxZoom: 13 });
+                }
+            }
+        }
+    }, [recommendations, mapLoaded]);
 
     // Handle isochrone visualization
     const loadIsochrone = useCallback(async (lat, lon, distance) => {

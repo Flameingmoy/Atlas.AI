@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import Map from './components/Map';
 import LayerControl from './components/LayerControl';
 import SearchBar from './components/SearchBar';
-import { sendChatMessage } from './services/api';
-import { Send, Bot, User, Database, Table, X, Tag, Layers } from 'lucide-react';
+import { sendChatMessage, getLocationRecommendations } from './services/api';
+import { Send, Bot, User, Database, Table, X, Tag, Layers, MapPin, Sparkles, TrendingUp } from 'lucide-react';
 
 function App() {
   const [activeLayers, setActiveLayers] = useState(['competitors']);
@@ -14,6 +14,7 @@ function App() {
   const [mapCenter, setMapCenter] = useState(null);
   const [filteredPOIs, setFilteredPOIs] = useState(null); // For category/super_category filtering
   const [activeFilter, setActiveFilter] = useState(null); // Track current filter
+  const [recommendations, setRecommendations] = useState(null); // Business location recommendations
 
   const toggleLayer = (layer) => {
     setActiveLayers(prev =>
@@ -57,6 +58,53 @@ function App() {
     setActiveFilter(null);
   };
 
+  // Clear recommendations
+  const handleClearRecommendations = () => {
+    setRecommendations(null);
+  };
+
+  // Check if query looks like a business location question
+  const isBusinessLocationQuery = (query) => {
+    const lowerQuery = query.toLowerCase();
+    
+    // Direct business location patterns
+    const locationPatterns = [
+      'open a', 'start a', 'open my', 'start my',
+      'where should i open', 'where should i start',
+      'best location for', 'best place for', 'best area for',
+      'recommend location', 'recommend area', 'recommend place',
+      'suitable location', 'suitable area', 'ideal location',
+      'want to open', 'want to start', 'planning to open',
+      'looking to open', 'looking to start',
+      'top areas for', 'top locations for'
+    ];
+    
+    // Business types
+    const businessWords = [
+      'cafe', 'coffee', 'restaurant', 'food', 'bakery', 'tea',
+      'shop', 'store', 'retail', 'boutique', 'mall',
+      'gym', 'fitness', 'yoga', 'spa', 'salon', 'wellness',
+      'hotel', 'hostel', 'lodge', 'resort',
+      'clinic', 'pharmacy', 'hospital', 'medical', 'dental',
+      'school', 'coaching', 'tuition', 'training',
+      'bank', 'atm', 'insurance',
+      'garage', 'mechanic', 'car wash', 'petrol',
+      'business', 'venture', 'enterprise'
+    ];
+    
+    // Check for direct patterns
+    if (locationPatterns.some(p => lowerQuery.includes(p))) {
+      return true;
+    }
+    
+    // Check for business word + location intent
+    const locationIntent = ['location', 'area', 'place', 'where', 'recommend', 'best', 'top', 'ideal', 'suitable'];
+    const hasBusinessWord = businessWords.some(b => lowerQuery.includes(b));
+    const hasLocationIntent = locationIntent.some(l => lowerQuery.includes(l));
+    
+    return hasBusinessWord && hasLocationIntent;
+  };
+
   const handleChatSubmit = async (e) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
@@ -66,6 +114,45 @@ function App() {
     setChatHistory(prev => [...prev, { role: 'user', text: userMsg }]);
     setIsLoading(true);
 
+    // Check if this is a business location query
+    if (isBusinessLocationQuery(userMsg)) {
+      try {
+        const result = await getLocationRecommendations(userMsg, 1.0);
+        
+        if (result.success) {
+          setRecommendations(result);
+          
+          // Add AI response with recommendations
+          const aiMessage = {
+            role: 'ai',
+            text: result.message,
+            recommendations: result.recommendations
+          };
+          setChatHistory(prev => [...prev, aiMessage]);
+          
+          // If we have recommendations, fly to the first one
+          if (result.recommendations && result.recommendations.length > 0) {
+            const top = result.recommendations[0];
+            setMapCenter({ lat: top.centroid.lat, lon: top.centroid.lon, zoom: 12 });
+          }
+        } else {
+          setChatHistory(prev => [...prev, { 
+            role: 'ai', 
+            text: `Sorry, I couldn't get recommendations: ${result.error || 'Unknown error'}` 
+          }]);
+        }
+      } catch (error) {
+        console.error("Recommendation error:", error);
+        setChatHistory(prev => [...prev, { 
+          role: 'ai', 
+          text: "Sorry, I encountered an error while getting recommendations." 
+        }]);
+      }
+      setIsLoading(false);
+      return;
+    }
+
+    // Regular chat message
     const response = await sendChatMessage(userMsg);
 
     setIsLoading(false);
@@ -149,7 +236,76 @@ function App() {
         selectedLocation={selectedLocation}
         mapCenter={mapCenter}
         filteredPOIs={filteredPOIs}
+        recommendations={recommendations}
       />
+
+      {/* Recommendations Panel */}
+      {recommendations && recommendations.recommendations && recommendations.recommendations.length > 0 && (
+        <div className="absolute top-24 left-4 z-[1000] bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200 p-4 max-w-sm">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="text-amber-500" size={20} />
+              <h3 className="font-bold text-gray-800">Top Locations for {recommendations.business_type}</h3>
+            </div>
+            <button 
+              onClick={handleClearRecommendations}
+              className="hover:bg-gray-100 rounded-full p-1"
+            >
+              <X size={18} className="text-gray-500" />
+            </button>
+          </div>
+          
+          <div className="text-xs text-gray-500 mb-3 flex items-center gap-1">
+            <TrendingUp size={12} />
+            <span>{recommendations.super_category}</span>
+          </div>
+          
+          <div className="space-y-3">
+            {recommendations.recommendations.slice(0, 3).map((rec, idx) => (
+              <div 
+                key={rec.area}
+                className={`p-3 rounded-xl cursor-pointer transition-all ${
+                  idx === 0 ? 'bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300' :
+                  idx === 1 ? 'bg-gradient-to-r from-gray-50 to-slate-50 border border-gray-200' :
+                  'bg-gray-50 border border-gray-100'
+                }`}
+                onClick={() => {
+                  setMapCenter({ lat: rec.centroid.lat, lon: rec.centroid.lon, zoom: 14 });
+                }}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                    idx === 0 ? 'bg-amber-400 text-white' :
+                    idx === 1 ? 'bg-gray-400 text-white' :
+                    'bg-gray-300 text-white'
+                  }`}>{idx + 1}</span>
+                  <span className="font-semibold text-gray-800">{rec.area}</span>
+                </div>
+                
+                <div className="ml-8 space-y-1">
+                  <div className="flex items-center gap-4 text-xs">
+                    <span className="text-gray-600">
+                      <span className="font-medium text-blue-600">{rec.composite_score}</span>/100 Score
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-gray-500">
+                    <span>📊 {rec.area_score} base</span>
+                    <span>🎯 {rec.opportunity_score} opportunity</span>
+                    <span>🏪 {rec.ecosystem_score} ecosystem</span>
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    {rec.competitors} competitors • {rec.complementary} complementary
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          
+          <div className="mt-3 text-xs text-gray-400 text-center">
+            Click an area to view on map
+          </div>
+        </div>
+      )}
 
       {/* Chat Interface */}
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-[1000] flex flex-col gap-2">

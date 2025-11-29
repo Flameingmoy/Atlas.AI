@@ -1,8 +1,10 @@
 from fastapi import APIRouter, HTTPException
 from typing import List, Optional
+from pydantic import BaseModel
 from app.services.analysis import AnalysisService
 from app.services.ai_agent import AIAgentService
 from app.services.latlong_client import LatLongClient
+from app.services.business_location_agent import get_business_location_agent
 from app.core.db import get_db_cursor, execute_query
 from cachetools import TTLCache
 from functools import wraps
@@ -12,6 +14,11 @@ import json
 agent = AIAgentService()
 latlong_client = LatLongClient()
 router = APIRouter()
+
+# Request models
+class LocationRecommendRequest(BaseModel):
+    query: str
+    radius_km: float = 1.0
 
 # ============================================
 # Backend Caching Layer
@@ -689,3 +696,73 @@ def get_external_landmarks(lat: float, lon: float):
 @cached(external_cache)
 def _external_landmarks_cached(lat: float, lon: float):
     return latlong_client.get_landmarks(lat, lon)
+
+
+# ============================================
+# Business Location Recommendation
+# ============================================
+
+@router.post("/recommend/location")
+def recommend_business_location(request: LocationRecommendRequest):
+    """
+    Recommend top 3 areas for a business based on user query.
+    
+    Uses AI to understand the business type, then analyzes:
+    - Area base scores (60%)
+    - Competition (opportunity) score (20%)
+    - Complementary businesses (ecosystem) score (20%)
+    
+    Returns top 3 areas with their centroids for map highlighting.
+    """
+    try:
+        location_agent = get_business_location_agent()
+        result = location_agent.recommend_locations(request.query, request.radius_km)
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error", "Failed to get recommendations"))
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing recommendation: {str(e)}")
+
+
+@router.get("/recommend/categories")
+def get_super_categories():
+    """Get list of valid super categories for business recommendations."""
+    from app.services.location_recommender import VALID_SUPER_CATEGORIES
+    return {"categories": VALID_SUPER_CATEGORIES}
+
+
+@router.get("/areas/geometry")
+def get_area_geometry(names: str):
+    """
+    Get GeoJSON polygons for given area names.
+    names: comma-separated list of area names
+    Returns GeoJSON FeatureCollection with area polygons.
+    """
+    area_list = [n.strip() for n in names.split(',') if n.strip()]
+    if not area_list:
+        return {"type": "FeatureCollection", "features": []}
+    
+    placeholders = ','.join(['%s'] * len(area_list))
+    query = f"""
+        SELECT name, ST_AsGeoJSON(geom) as geojson
+        FROM delhi_area
+        WHERE name IN ({placeholders})
+    """
+    results = execute_query(query, tuple(area_list))
+    
+    features = []
+    if results:
+        for row in results:
+            features.append({
+                "type": "Feature",
+                "properties": {"name": row[0]},
+                "geometry": json.loads(row[1])
+            })
+    
+    return {"type": "FeatureCollection", "features": features}
+
+
