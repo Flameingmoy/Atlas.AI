@@ -5,7 +5,7 @@ import { sendChatMessage, getLocationRecommendations, analyzeAreaOpportunities, 
 import { Send, X, Tag, Layers, Sparkles, TrendingUp, MessageSquare, MapPin, Building2, Lightbulb } from 'lucide-react';
 
 function App() {
-  const [activeLayers, setActiveLayers] = useState(['competitors']);
+  const [activeLayers, setActiveLayers] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(null);
@@ -377,21 +377,49 @@ function App() {
                   </div>
                   <div className="space-y-3">
                     {sidePanel.content.recommendations?.map((rec, idx) => (
-                      <div key={rec.category} className={`p-3 rounded-lg border ${
-                        rec.type === 'gap' ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'
+                      <div key={rec.category} className={`p-4 rounded-xl border ${
+                        rec.type === 'gap' ? 'bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200' : 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200'
                       }`}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-bold text-gray-800">{idx + 1}. {rec.category}</span>
-                          <span className={`text-xs px-2 py-0.5 rounded ${
-                            rec.type === 'gap' ? 'bg-blue-200 text-blue-700' : 'bg-green-200 text-green-700'
-                          }`}>
-                            {rec.type === 'gap' ? 'Market Gap' : 'Complementary'}
-                          </span>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-gray-800">{idx + 1}. {rec.category}</span>
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                              rec.type === 'gap' ? 'bg-blue-200 text-blue-700' : 'bg-green-200 text-green-700'
+                            }`}>
+                              {rec.type === 'gap' ? 'Market Gap' : 'Complementary'}
+                            </span>
+                          </div>
+                          <span className={`text-lg font-bold ${
+                            rec.type === 'gap' ? 'text-blue-600' : 'text-green-600'
+                          }`}>{Math.round(rec.score)}</span>
                         </div>
+                        
+                        {/* Score breakdown */}
+                        <div className="grid grid-cols-3 gap-2 text-xs mb-3">
+                          <div className={`rounded p-2 text-center ${
+                            rec.type === 'gap' ? 'bg-blue-100/50' : 'bg-green-100/50'
+                          }`}>
+                            <div className="text-gray-500">Demand</div>
+                            <div className="font-semibold">{rec.type === 'gap' ? 'High' : 'Medium'}</div>
+                          </div>
+                          <div className={`rounded p-2 text-center ${
+                            rec.type === 'gap' ? 'bg-blue-100/50' : 'bg-green-100/50'
+                          }`}>
+                            <div className="text-gray-500">Supply</div>
+                            <div className="font-semibold">{rec.type === 'gap' ? 'Low' : 'Growing'}</div>
+                          </div>
+                          <div className={`rounded p-2 text-center ${
+                            rec.type === 'gap' ? 'bg-blue-100/50' : 'bg-green-100/50'
+                          }`}>
+                            <div className="text-gray-500">Fit</div>
+                            <div className="font-semibold">{Math.round(rec.score) > 70 ? 'Excellent' : Math.round(rec.score) > 40 ? 'Good' : 'Fair'}</div>
+                          </div>
+                        </div>
+                        
                         <div className="text-xs text-gray-600 mb-2">{rec.reason}</div>
                         <div className="flex flex-wrap gap-1">
                           {rec.examples?.map(ex => (
-                            <span key={ex} className="px-2 py-0.5 bg-white rounded text-xs text-gray-600">{ex}</span>
+                            <span key={ex} className="px-2 py-1 bg-white/70 rounded-full text-xs text-gray-700 border border-gray-200">{ex}</span>
                           ))}
                         </div>
                       </div>
