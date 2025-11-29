@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import Map from './components/Map';
 import LayerControl from './components/LayerControl';
+import SearchBar from './components/SearchBar';
 import { sendChatMessage } from './services/api';
 import { Send, Bot, User, Database, Table } from 'lucide-react';
 
@@ -9,6 +10,8 @@ function App() {
   const [chatInput, setChatInput] = useState("");
   const [chatHistory, setChatHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedLocation, setSelectedLocation] = useState(null);
+  const [mapCenter, setMapCenter] = useState(null);
 
   const toggleLayer = (layer) => {
     setActiveLayers(prev =>
@@ -16,6 +19,12 @@ function App() {
         ? prev.filter(l => l !== layer)
         : [...prev, layer]
     );
+  };
+
+  // Handle location selection from search
+  const handleLocationSelect = (location) => {
+    setSelectedLocation(location);
+    setMapCenter({ lat: location.lat, lon: location.lon, zoom: 14 });
   };
 
   const handleChatSubmit = async (e) => {
@@ -68,16 +77,23 @@ function App() {
 
   return (
     <div className="h-screen w-screen relative overflow-hidden bg-gray-900">
-      {/* Header / Overlay */}
-      <div className="absolute top-0 left-0 w-full p-4 pointer-events-none z-[1000] flex justify-center">
+      {/* Header with Search */}
+      <div className="absolute top-0 left-0 w-full p-4 pointer-events-none z-[1000] flex justify-center items-center gap-4">
         <div className="bg-black/80 backdrop-blur-md text-white px-6 py-2 rounded-full shadow-2xl border border-white/10 pointer-events-auto">
           <h1 className="font-bold text-lg tracking-wide">ATLAS <span className="text-blue-400 font-light">AI</span></h1>
+        </div>
+        <div className="pointer-events-auto">
+          <SearchBar onLocationSelect={handleLocationSelect} />
         </div>
       </div>
 
       <LayerControl activeLayers={activeLayers} toggleLayer={toggleLayer} />
 
-      <Map activeLayers={activeLayers} />
+      <Map 
+        activeLayers={activeLayers} 
+        selectedLocation={selectedLocation}
+        mapCenter={mapCenter}
+      />
 
       {/* Chat Interface */}
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-[1000] flex flex-col gap-2">

@@ -153,16 +153,40 @@ def get_delhi_boundary():
 
 @router.get("/external/poi")
 def get_external_poi(lat: float, lon: float, category: Optional[str] = None):
+    """Get points of interest near a location from LatLong API."""
     return latlong_client.get_pois(lat, lon, category=category)
 
 @router.get("/external/reverse")
 def get_external_reverse(lat: float, lon: float):
+    """Get address for coordinates from LatLong API."""
     return latlong_client.reverse_geocode(lat, lon)
 
 @router.get("/external/isochrone")
-def get_external_isochrone(lat: float, lon: float, time: int = 15):
-    return latlong_client.get_isochrone(lat, lon, time_minutes=time)
+def get_external_isochrone(lat: float, lon: float, distance: float = 1.0):
+    """Get isochrone (reachable area) polygon from LatLong API."""
+    return latlong_client.get_isochrone(lat, lon, distance_km=distance)
 
 @router.get("/external/distance")
 def get_external_distance(lat1: float, lon1: float, lat2: float, lon2: float):
+    """Get distance between two points."""
     return latlong_client.get_distance(lat1, lon1, lat2, lon2)
+
+@router.get("/external/autocomplete")
+def get_external_autocomplete(query: str, lat: Optional[float] = None, lon: Optional[float] = None, limit: int = 10):
+    """Get autocomplete suggestions for a search query from LatLong API."""
+    return latlong_client.autocomplete(query, lat=lat, lon=lon, limit=limit)
+
+@router.get("/external/geocode")
+def get_external_geocode(address: str):
+    """Convert address to coordinates using LatLong API."""
+    return latlong_client.geocode(address)
+
+@router.get("/external/validate")
+def get_external_validate(address: str, lat: float, lon: float):
+    """Validate if an address matches given coordinates using LatLong API."""
+    return latlong_client.validate_address(address, lat, lon)
+
+@router.get("/external/landmarks")
+def get_external_landmarks(lat: float, lon: float):
+    """Get nearby landmarks from LatLong API."""
+    return latlong_client.get_landmarks(lat, lon)

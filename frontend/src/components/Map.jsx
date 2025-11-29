@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { fetchPOIs } from '../services/api';
+import { fetchPOIs, fetchReverseGeocode, fetchIsochrone, fetchLandmarks } from '../services/api';
 
 // Delhi center and radius
 const DELHI_CENTER = [77.1025, 28.6139]; // [lng, lat]
@@ -95,12 +95,18 @@ const getCategoryColor = (category) => {
     return '#6B7280'; // Gray
 };
 
-const Map = ({ activeLayers }) => {
+const Map = ({ activeLayers, selectedLocation, mapCenter }) => {
     const mapContainer = useRef(null);
     const map = useRef(null);
     const markersRef = useRef([]);
+    const selectedMarkerRef = useRef(null);
+    const isochroneSourceRef = useRef(false);
     const [pois, setPois] = useState([]);
     const [mapLoaded, setMapLoaded] = useState(false);
+    const [clickedLocation, setClickedLocation] = useState(null);
+    const [isLoadingAddress, setIsLoadingAddress] = useState(false);
+    const [showIsochrone, setShowIsochrone] = useState(false);
+    const [isochroneDistance, setIsochroneDistance] = useState(1.0);
 
     // Initialize MapLibre GL map with Latlong tiles
     useEffect(() => {
@@ -112,7 +118,7 @@ const Map = ({ activeLayers }) => {
             center: DELHI_CENTER,
             zoom: 10,
             minZoom: 9,
-            maxZoom: 15,
+            maxZoom: 18,
             maxBounds: [[76.5, 28.0], [77.7, 29.2]]
         });
 
@@ -165,7 +171,68 @@ const Map = ({ activeLayers }) => {
                 }
             });
 
+            // Add isochrone source and layer (initially empty)
+            map.current.addSource('isochrone', {
+                type: 'geojson',
+                data: {
+                    type: 'FeatureCollection',
+                    features: []
+                }
+            });
+
+            map.current.addLayer({
+                id: 'isochrone-fill',
+                type: 'fill',
+                source: 'isochrone',
+                paint: {
+                    'fill-color': '#3B82F6',
+                    'fill-opacity': 0.2
+                }
+            });
+
+            map.current.addLayer({
+                id: 'isochrone-outline',
+                type: 'line',
+                source: 'isochrone',
+                paint: {
+                    'line-color': '#3B82F6',
+                    'line-width': 2
+                }
+            });
+
+            isochroneSourceRef.current = true;
             setMapLoaded(true);
+        });
+
+        // Handle map click for reverse geocoding
+        map.current.on('click', async (e) => {
+            const { lng, lat } = e.lngLat;
+            setClickedLocation({ lat, lon: lng, address: null, landmarks: null });
+            setIsLoadingAddress(true);
+            
+            // Fetch reverse geocode and landmarks in parallel
+            const [reverseResult, landmarksResult] = await Promise.all([
+                fetchReverseGeocode(lat, lng),
+                fetchLandmarks(lat, lng)
+            ]);
+            
+            let addressInfo = null;
+            if (reverseResult?.status === 'success' && reverseResult.data) {
+                addressInfo = reverseResult.data;
+            }
+            
+            let landmarksInfo = null;
+            if (landmarksResult?.status === 'success' && landmarksResult.data) {
+                landmarksInfo = landmarksResult.data;
+            }
+            
+            setClickedLocation({ 
+                lat, 
+                lon: lng, 
+                address: addressInfo,
+                landmarks: landmarksInfo
+            });
+            setIsLoadingAddress(false);
         });
 
         map.current.on('error', (e) => {
@@ -246,9 +313,220 @@ const Map = ({ activeLayers }) => {
         }
     }, [pois, activeLayers, mapLoaded]);
 
+    // Handle map center changes from search
+    useEffect(() => {
+        if (!map.current || !mapLoaded || !mapCenter) return;
+        
+        map.current.flyTo({
+            center: [mapCenter.lon, mapCenter.lat],
+            zoom: mapCenter.zoom || 14,
+            essential: true
+        });
+    }, [mapCenter, mapLoaded]);
+
+    // Handle selected location marker from search
+    useEffect(() => {
+        if (!map.current || !mapLoaded) return;
+
+        // Remove previous selected marker
+        if (selectedMarkerRef.current) {
+            selectedMarkerRef.current.remove();
+            selectedMarkerRef.current = null;
+        }
+
+        if (selectedLocation) {
+            // Create a distinctive marker for the selected location
+            const el = document.createElement('div');
+            el.style.width = '24px';
+            el.style.height = '24px';
+            el.style.backgroundColor = '#EF4444';
+            el.style.borderRadius = '50%';
+            el.style.border = '3px solid white';
+            el.style.boxShadow = '0 2px 10px rgba(0,0,0,0.3)';
+            el.style.cursor = 'pointer';
+
+            const marker = new maplibregl.Marker({ element: el })
+                .setLngLat([selectedLocation.lon, selectedLocation.lat])
+                .setPopup(
+                    new maplibregl.Popup({ offset: 25 })
+                        .setHTML(`<div style="color:#333;"><b>${selectedLocation.name}</b></div>`)
+                )
+                .addTo(map.current);
+
+            // Open popup automatically
+            marker.togglePopup();
+            selectedMarkerRef.current = marker;
+        }
+    }, [selectedLocation, mapLoaded]);
+
+    // Handle isochrone visualization
+    const loadIsochrone = useCallback(async (lat, lon, distance) => {
+        if (!map.current || !mapLoaded || !isochroneSourceRef.current) return;
+
+        const result = await fetchIsochrone(lat, lon, distance);
+        
+        if (result?.status === 'success' && result.data?.geom) {
+            const geojsonData = {
+                type: 'FeatureCollection',
+                features: [{
+                    type: 'Feature',
+                    geometry: result.data.geom.geometry,
+                    properties: { distance }
+                }]
+            };
+            
+            map.current.getSource('isochrone').setData(geojsonData);
+        }
+    }, [mapLoaded]);
+
+    // Clear isochrone
+    const clearIsochrone = useCallback(() => {
+        if (!map.current || !isochroneSourceRef.current) return;
+        
+        map.current.getSource('isochrone').setData({
+            type: 'FeatureCollection',
+            features: []
+        });
+        setShowIsochrone(false);
+    }, []);
+
+    // Load isochrone when clicked location and showIsochrone is enabled
+    useEffect(() => {
+        if (showIsochrone && clickedLocation) {
+            loadIsochrone(clickedLocation.lat, clickedLocation.lon, isochroneDistance);
+        }
+    }, [showIsochrone, clickedLocation, isochroneDistance, loadIsochrone]);
+
     return (
         <div style={{ position: 'relative', width: '100%', height: '100%' }}>
             <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
+            
+            {/* Clicked Location Info Panel */}
+            {clickedLocation && (
+                <div style={{
+                    position: 'absolute',
+                    top: '80px',
+                    right: '60px',
+                    background: 'rgba(255,255,255,0.98)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    fontSize: '12px',
+                    boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+                    zIndex: 1000,
+                    maxWidth: '320px',
+                    minWidth: '280px'
+                }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                        <h4 style={{ fontWeight: 'bold', color: '#333', margin: 0 }}>📍 Location Info</h4>
+                        <button 
+                            onClick={() => setClickedLocation(null)}
+                            style={{ 
+                                background: 'none', 
+                                border: 'none', 
+                                cursor: 'pointer', 
+                                fontSize: '16px',
+                                color: '#666'
+                            }}
+                        >
+                            ✕
+                        </button>
+                    </div>
+                    
+                    {/* Coordinates */}
+                    <div style={{ marginBottom: '12px', padding: '8px', background: '#f5f5f5', borderRadius: '6px' }}>
+                        <div style={{ color: '#666', fontSize: '10px', marginBottom: '4px' }}>COORDINATES</div>
+                        <div style={{ color: '#333', fontFamily: 'monospace' }}>
+                            {clickedLocation.lat.toFixed(6)}, {clickedLocation.lon.toFixed(6)}
+                        </div>
+                    </div>
+
+                    {/* Address */}
+                    {isLoadingAddress ? (
+                        <div style={{ color: '#666', fontStyle: 'italic' }}>Loading address...</div>
+                    ) : clickedLocation.address ? (
+                        <div style={{ marginBottom: '12px' }}>
+                            <div style={{ color: '#666', fontSize: '10px', marginBottom: '4px' }}>ADDRESS</div>
+                            <div style={{ color: '#333', lineHeight: '1.4' }}>
+                                {clickedLocation.address.address}
+                            </div>
+                            {clickedLocation.address.pincode && (
+                                <div style={{ color: '#666', marginTop: '4px' }}>
+                                    📮 Pincode: {clickedLocation.address.pincode}
+                                </div>
+                            )}
+                            {clickedLocation.address.building_name && (
+                                <div style={{ color: '#666', marginTop: '2px' }}>
+                                    🏢 {clickedLocation.address.building_name}
+                                </div>
+                            )}
+                        </div>
+                    ) : null}
+
+                    {/* Nearby Landmarks */}
+                    {clickedLocation.landmarks && clickedLocation.landmarks.length > 0 && (
+                        <div style={{ marginBottom: '12px' }}>
+                            <div style={{ color: '#666', fontSize: '10px', marginBottom: '4px' }}>NEARBY LANDMARKS</div>
+                            <div style={{ maxHeight: '100px', overflowY: 'auto' }}>
+                                {clickedLocation.landmarks.slice(0, 4).map((lm, idx) => (
+                                    <div key={idx} style={{ color: '#555', padding: '2px 0', borderBottom: '1px solid #eee' }}>
+                                        🏛️ {lm.name}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Isochrone Controls */}
+                    <div style={{ borderTop: '1px solid #eee', paddingTop: '12px', marginTop: '8px' }}>
+                        <div style={{ color: '#666', fontSize: '10px', marginBottom: '8px' }}>REACHABILITY ANALYSIS</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                            <select 
+                                value={isochroneDistance}
+                                onChange={(e) => setIsochroneDistance(parseFloat(e.target.value))}
+                                style={{ 
+                                    padding: '6px 10px', 
+                                    borderRadius: '6px', 
+                                    border: '1px solid #ddd',
+                                    fontSize: '12px',
+                                    flex: 1
+                                }}
+                            >
+                                <option value={0.5}>0.5 km</option>
+                                <option value={1}>1 km</option>
+                                <option value={2}>2 km</option>
+                                <option value={3}>3 km</option>
+                                <option value={5}>5 km</option>
+                            </select>
+                            <button
+                                onClick={() => {
+                                    if (showIsochrone) {
+                                        clearIsochrone();
+                                    } else {
+                                        setShowIsochrone(true);
+                                    }
+                                }}
+                                style={{
+                                    padding: '6px 12px',
+                                    borderRadius: '6px',
+                                    border: 'none',
+                                    background: showIsochrone ? '#EF4444' : '#3B82F6',
+                                    color: 'white',
+                                    cursor: 'pointer',
+                                    fontSize: '12px',
+                                    fontWeight: '500'
+                                }}
+                            >
+                                {showIsochrone ? 'Clear' : 'Show Area'}
+                            </button>
+                        </div>
+                        {showIsochrone && (
+                            <div style={{ color: '#666', fontSize: '10px' }}>
+                                Blue area shows reachable region within {isochroneDistance} km
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
             
             {activeLayers.includes('competitors') && (
                 <div style={{
