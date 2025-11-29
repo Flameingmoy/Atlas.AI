@@ -13,10 +13,11 @@
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | React 19, Vite, Tailwind CSS, Leaflet |
-| Backend | FastAPI, Python 3.10+ |
+| Frontend | React 19, Vite, Tailwind CSS, MapLibre GL |
+| Backend | FastAPI, Python 3.11+ |
 | AI/LLM | LangChain, Groq (llama-3.3-70b) |
-| Database | DuckDB with spatial extensions |
+| Database | PostgreSQL + PostGIS (with connection pooling) |
+| External APIs | LatLong.ai (geocoding, isochrones, POI) |
 | Deployment | Docker, Docker Compose |
 
 ## 🚀 Quick Start
@@ -28,16 +29,41 @@
 git clone https://github.com/Flameingmoy/Atlas.AI.git
 cd Atlas.AI
 
-# Create environment file
-echo "GROQ_API_KEY=your_api_key_here" > .env
+# Create environment file with your API keys
+cp .env.example .env
+# Edit .env and add your GROQ_API_KEY and LATLONG_TOKEN
 
-# Start all services
-docker-compose up -d
+# Start all services (PostGIS, Backend, Frontend)
+docker compose up -d
+
+# Migrate data from DuckDB to PostGIS (first time only)
+./scripts/migrate.sh
 
 # Access the application
-# Frontend: http://localhost:5173
+# Frontend: http://localhost:8080
 # Backend:  http://localhost:8000
+# PostGIS:  localhost:5433
 ```
+
+### Database Migration (For Teammates)
+
+If your PostGIS database is empty, run the migration script to populate it from DuckDB:
+
+```bash
+# Make sure PostGIS is running
+docker compose up -d db
+
+# Run migration (reads from data/delhi.db, writes to PostGIS)
+./scripts/migrate.sh
+
+# Or start PostGIS and migrate in one command
+./scripts/migrate.sh --start-db
+```
+
+The migration script will:
+- Create all required tables with PostGIS geometry columns
+- Migrate 314,000+ POIs from DuckDB
+- Create spatial indexes for fast queries
 
 ### Manual Installation
 
@@ -53,13 +79,16 @@ cd frontend && npm install && npm run dev
 
 ## 📖 Usage
 
-1. Open `http://localhost:5173` in your browser
-2. The map displays Delhi, India with POI markers
-3. Use the **chat bar** at the bottom to ask questions:
+1. Open `http://localhost:8080` in your browser
+2. The map displays Delhi, India with color-coded POI markers
+3. **Search** for locations using the search bar (top center)
+4. **Click** anywhere on the map to get address info and nearby landmarks
+5. **Isochrone Analysis** - Select a distance to see reachable areas
+6. Use the **chat bar** at the bottom to ask questions:
    - "How many restaurants are there?"
    - "Show me all categories of POIs"
    - "List cafes with their coordinates"
-4. Toggle map layers using the **layer control** (top-left)
+7. Toggle map layers using the **layer control** (top-left)
 
 ## 🗂️ Project Structure
 
@@ -105,9 +134,17 @@ Atlas.AI/
 | Variable | Description | Required |
 |----------|-------------|----------|
 | `GROQ_API_KEY` | Groq API key for LLM | Yes |
-| `DATABASE_PATH` | DuckDB database path | No (default: `data/atlas.duckdb`) |
+| `LATLONG_TOKEN` | LatLong.ai API token | Yes |
+| `DB_HOST` | PostGIS host | No (default: `localhost`) |
+| `DB_PORT` | PostGIS port | No (default: `5433`) |
+| `DB_USER` | PostGIS user | No (default: `atlas`) |
+| `DB_PASSWORD` | PostGIS password | No (default: `atlas_secret`) |
+| `DB_NAME` | PostGIS database | No (default: `atlas_db`) |
+| `DUCKDB_PATH` | DuckDB source file for migration | No (default: `./data/delhi.db`) |
 
-Get a Groq API key at [console.groq.com](https://console.groq.com)
+Get API keys at:
+- Groq: [console.groq.com](https://console.groq.com)
+- LatLong.ai: [latlong.ai](https://latlong.ai)
 
 ## 📄 License
 
