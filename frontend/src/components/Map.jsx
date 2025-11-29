@@ -95,7 +95,7 @@ const getCategoryColor = (category) => {
     return '#6B7280'; // Gray
 };
 
-const Map = ({ activeLayers, selectedLocation, mapCenter }) => {
+const Map = ({ activeLayers, selectedLocation, mapCenter, filteredPOIs }) => {
     const mapContainer = useRef(null);
     const map = useRef(null);
     const markersRef = useRef([]);
@@ -265,9 +265,15 @@ const Map = ({ activeLayers, selectedLocation, mapCenter }) => {
     }, []);
 
     // Fetch POIs for current viewport (debounced)
+    // Skip viewport fetching if we have filteredPOIs from category search
     const fetchViewportPOIs = useCallback(() => {
         if (!map.current || !mapLoaded || !activeLayers.includes('competitors')) {
             setPois([]);
+            return;
+        }
+
+        // If we have filtered POIs from search, don't fetch viewport POIs
+        if (filteredPOIs && filteredPOIs.length > 0) {
             return;
         }
 
@@ -293,7 +299,36 @@ const Map = ({ activeLayers, selectedLocation, mapCenter }) => {
                 console.log(`Received ${data.length} POIs`);
             }
         }, 150); // 150ms debounce
-    }, [mapLoaded, activeLayers, getLimitForZoom]);
+    }, [mapLoaded, activeLayers, getLimitForZoom, filteredPOIs]);
+
+    // Handle filtered POIs from category/super_category search
+    useEffect(() => {
+        if (filteredPOIs && filteredPOIs.length > 0) {
+            console.log(`Using ${filteredPOIs.length} filtered POIs from search`);
+            setPois(filteredPOIs);
+            
+            // Auto-fit map to show all filtered POIs
+            if (map.current && mapLoaded && filteredPOIs.length > 1) {
+                const bounds = new maplibregl.LngLatBounds();
+                filteredPOIs.forEach(poi => {
+                    if (poi.lat && poi.lon) {
+                        bounds.extend([poi.lon, poi.lat]);
+                    }
+                });
+                
+                // Only fit if bounds are valid
+                if (!bounds.isEmpty()) {
+                    map.current.fitBounds(bounds, {
+                        padding: 50,
+                        maxZoom: 14
+                    });
+                }
+            }
+        } else if (filteredPOIs === null) {
+            // Filter was cleared, refetch viewport POIs
+            fetchViewportPOIs();
+        }
+    }, [filteredPOIs, mapLoaded]);
 
     // Attach moveend listener to refetch POIs on pan/zoom
     useEffect(() => {

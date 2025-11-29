@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, MapPin, X, Loader2, AlertCircle, Building2 } from 'lucide-react';
-import { fetchAutocomplete, fetchGeocode, searchAreas, checkPointInDelhi } from '../services/api';
+import { Search, MapPin, X, Loader2, AlertCircle, Building2, Tag, Layers } from 'lucide-react';
+import { unifiedSearch, fetchPOIsByCategory, fetchPOIsBySuperCategory, fetchAutocomplete, fetchGeocode, checkPointInDelhi } from '../services/api';
 
-// Delhi bounding box from database: Lon [76.8388, 77.3475], Lat [28.4043, 28.8835]
+// Delhi bounding box from database
 const DELHI_BOUNDS = {
     minLat: 28.4043,
     maxLat: 28.8835,
@@ -20,18 +20,73 @@ const isWithinDelhiBounds = (lat, lon) => {
     );
 };
 
-const SearchBar = ({ onLocationSelect }) => {
+// Icon mapping for different result types
+const getIcon = (type) => {
+    switch (type) {
+        case 'area':
+            return <Building2 size={16} className="text-green-600" />;
+        case 'category':
+            return <Tag size={16} className="text-purple-600" />;
+        case 'super_category':
+            return <Layers size={16} className="text-orange-500" />;
+        case 'poi':
+            return <MapPin size={16} className="text-blue-500" />;
+        case 'external':
+            return <MapPin size={16} className="text-blue-500" />;
+        default:
+            return <MapPin size={16} className="text-gray-500" />;
+    }
+};
+
+// Label and color mapping for result types
+const getTypeInfo = (type, count, category) => {
+    switch (type) {
+        case 'area':
+            return {
+                label: '✓ Delhi Area',
+                className: 'text-green-600'
+            };
+        case 'category':
+            return {
+                label: `Category · ${count?.toLocaleString()} places`,
+                className: 'text-purple-600'
+            };
+        case 'super_category':
+            return {
+                label: `${count?.toLocaleString()} places`,
+                className: 'text-orange-500'
+            };
+        case 'poi':
+            return {
+                label: category || 'Point of Interest',
+                className: 'text-gray-400'
+            };
+        case 'external':
+            return {
+                label: 'External location',
+                className: 'text-gray-400'
+            };
+        default:
+            return {
+                label: '',
+                className: 'text-gray-400'
+            };
+    }
+};
+
+const SearchBar = ({ onLocationSelect, onCategorySelect, onPOIsLoad }) => {
     const [query, setQuery] = useState('');
     const [suggestions, setSuggestions] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [showDropdown, setShowDropdown] = useState(false);
     const [selectedIndex, setSelectedIndex] = useState(-1);
     const [error, setError] = useState(null);
+    const [activeFilter, setActiveFilter] = useState(null);
     const inputRef = useRef(null);
     const dropdownRef = useRef(null);
     const debounceRef = useRef(null);
 
-    // Debounced hybrid search: local areas + external API
+    // Debounced unified search + external API
     useEffect(() => {
         if (debounceRef.current) {
             clearTimeout(debounceRef.current);
@@ -44,29 +99,21 @@ const SearchBar = ({ onLocationSelect }) => {
             return;
         }
 
+        // Don't search if query starts with "Category:" or "Super Category:"
+        if (query.startsWith('Category:') || query.startsWith('Super Category:')) {
+            return;
+        }
+
         setIsLoading(true);
         setError(null);
         debounceRef.current = setTimeout(async () => {
             // Search both local database and external API in parallel
             const [localResults, externalResult] = await Promise.all([
-                searchAreas(query, 5),  // Local Delhi areas from database
-                fetchAutocomplete(query, 28.6139, 77.1025, 5)  // External API
+                unifiedSearch(query, 12),
+                fetchAutocomplete(query, 28.6139, 77.1025, 5)
             ]);
 
-            const combinedSuggestions = [];
-
-            // Add local area results first (guaranteed to be in Delhi)
-            if (localResults && localResults.length > 0) {
-                localResults.forEach(area => {
-                    combinedSuggestions.push({
-                        name: area.name,
-                        lat: area.lat,
-                        lon: area.lon,
-                        type: 'area',
-                        source: 'local'
-                    });
-                });
-            }
+            const combinedSuggestions = [...localResults];
 
             // Add external results (filter for Delhi-related)
             if (externalResult?.status === 'success' && externalResult.data) {
@@ -152,69 +199,149 @@ const SearchBar = ({ onLocationSelect }) => {
         setIsLoading(true);
         setError(null);
 
-        let lat, lon;
+        const { type } = suggestion;
 
-        // If it's a local area result, we already have coordinates
-        if (suggestion.source === 'local' && suggestion.lat && suggestion.lon) {
-            lat = suggestion.lat;
-            lon = suggestion.lon;
-        } else {
-            // External result - need to geocode
-            const geocodeResult = await fetchGeocode(suggestion.name);
-            
-            if (geocodeResult?.status === 'success' && geocodeResult.data) {
-                lat = parseFloat(geocodeResult.data.latitude);
-                lon = parseFloat(geocodeResult.data.longitude);
-            } else {
-                setError('Could not find coordinates for this location.');
-                setIsLoading(false);
-                return;
+        try {
+            if (type === 'area') {
+                // Area selection - navigate to location
+                const { lat, lon, name } = suggestion;
+                
+                if (!isWithinDelhiBounds(lat, lon)) {
+                    setError('This location is outside Delhi bounds.');
+                    setIsLoading(false);
+                    return;
+                }
+
+                setQuery(name);
+                setActiveFilter(null);
+                onLocationSelect?.({
+                    name,
+                    lat,
+                    lon,
+                    type: 'area'
+                });
+            } else if (type === 'poi') {
+                // POI selection - navigate to specific POI
+                const { lat, lon, name, category } = suggestion;
+                
+                if (!isWithinDelhiBounds(lat, lon)) {
+                    setError('This POI is outside Delhi bounds.');
+                    setIsLoading(false);
+                    return;
+                }
+
+                setQuery(name);
+                setActiveFilter(null);
+                onLocationSelect?.({
+                    name,
+                    lat,
+                    lon,
+                    type: 'poi',
+                    category
+                });
+            } else if (type === 'category') {
+                // Category selection - load all POIs of this category
+                const { name, count } = suggestion;
+                setQuery(`Category: ${name}`);
+                setActiveFilter({ type: 'category', name, count });
+                
+                const pois = await fetchPOIsByCategory(name, 2000);
+                onPOIsLoad?.({
+                    pois,
+                    filterType: 'category',
+                    filterName: name,
+                    count
+                });
+                onCategorySelect?.({ type: 'category', name, count });
+            } else if (type === 'super_category') {
+                // Super category selection - load all POIs of this super category
+                const { name, count } = suggestion;
+                setQuery(`Super Category: ${name}`);
+                setActiveFilter({ type: 'super_category', name, count });
+                
+                const pois = await fetchPOIsBySuperCategory(name, 2000);
+                onPOIsLoad?.({
+                    pois,
+                    filterType: 'super_category',
+                    filterName: name,
+                    count
+                });
+                onCategorySelect?.({ type: 'super_category', name, count });
+            } else if (type === 'external') {
+                // External result - need to geocode first
+                const geocodeResult = await fetchGeocode(suggestion.name);
+                
+                if (geocodeResult?.status === 'success' && geocodeResult.data) {
+                    const lat = parseFloat(geocodeResult.data.latitude);
+                    const lon = parseFloat(geocodeResult.data.longitude);
+                    
+                    // Quick bounding box check first
+                    if (!isWithinDelhiBounds(lat, lon)) {
+                        setError('This location is outside Delhi. Please select a location within Delhi NCT.');
+                        setQuery('');
+                        setIsLoading(false);
+                        return;
+                    }
+                    
+                    // Do precise geometry check against database
+                    const isInDelhi = await checkPointInDelhi(lat, lon);
+                    if (!isInDelhi) {
+                        setError('This location is outside Delhi city boundaries. Please select a location within Delhi NCT.');
+                        setQuery('');
+                        setIsLoading(false);
+                        return;
+                    }
+                    
+                    setQuery(suggestion.name);
+                    setActiveFilter(null);
+                    onLocationSelect?.({
+                        name: suggestion.name,
+                        lat,
+                        lon,
+                        type: 'external',
+                        geoid: suggestion.geoid
+                    });
+                } else {
+                    setError('Could not find coordinates for this location.');
+                }
             }
+        } catch (err) {
+            console.error('Selection error:', err);
+            setError('Failed to process selection. Please try again.');
         }
-
-        // Quick bounding box check first
-        if (!isWithinDelhiBounds(lat, lon)) {
-            setError('This location is outside Delhi. Please select a location within Delhi NCT.');
-            setQuery('');
-            setIsLoading(false);
-            return;
-        }
-
-        // For external results, do precise geometry check against database
-        if (suggestion.source !== 'local') {
-            const isInDelhi = await checkPointInDelhi(lat, lon);
-            if (!isInDelhi) {
-                setError('This location is outside Delhi city boundaries. Please select a location within Delhi NCT.');
-                setQuery('');
-                setIsLoading(false);
-                return;
-            }
-        }
-
-        setQuery(suggestion.name);
-        onLocationSelect({
-            name: suggestion.name,
-            lat: lat,
-            lon: lon,
-            type: suggestion.type,
-            geoid: suggestion.geoid
-        });
         
         setIsLoading(false);
     };
 
-    // Clear search
+    // Clear search and filter
     const handleClear = () => {
         setQuery('');
         setSuggestions([]);
         setShowDropdown(false);
         setSelectedIndex(-1);
         setError(null);
+        setActiveFilter(null);
+        onCategorySelect?.(null);
         inputRef.current?.focus();
     };
 
     return (
         <div className="relative w-full max-w-md">
+            {/* Active Filter Badge */}
+            {activeFilter && (
+                <div className="absolute bottom-full left-0 right-0 mb-2 flex items-center gap-2">
+                    <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${
+                        activeFilter.type === 'category' 
+                            ? 'bg-purple-100 text-purple-700' 
+                            : 'bg-orange-100 text-orange-700'
+                    }`}>
+                        {activeFilter.type === 'category' ? <Tag size={12} /> : <Layers size={12} />}
+                        <span>{activeFilter.name}</span>
+                        <span className="opacity-70">({activeFilter.count?.toLocaleString()})</span>
+                    </div>
+                </div>
+            )}
+
             {/* Error Message */}
             {error && (
                 <div className="absolute bottom-full left-0 right-0 mb-2 bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2 shadow-lg z-[1002]">
@@ -244,10 +371,10 @@ const SearchBar = ({ onLocationSelect }) => {
                     ref={inputRef}
                     type="text"
                     value={query}
-                    onChange={(e) => { setQuery(e.target.value); setError(null); }}
+                    onChange={(e) => { setQuery(e.target.value); setError(null); setActiveFilter(null); }}
                     onKeyDown={handleKeyDown}
                     onFocus={() => suggestions.length > 0 && setShowDropdown(true)}
-                    placeholder="Search locations in Delhi..."
+                    placeholder="Search areas, POIs, categories..."
                     className={`w-full pl-10 pr-10 py-2.5 bg-white/95 backdrop-blur-sm border rounded-xl text-sm text-gray-800 placeholder-gray-500 focus:outline-none focus:ring-2 focus:border-transparent shadow-lg ${
                         error ? 'border-red-300 focus:ring-red-500' : 'border-gray-200 focus:ring-blue-500'
                     }`}
@@ -266,13 +393,13 @@ const SearchBar = ({ onLocationSelect }) => {
             {showDropdown && suggestions.length > 0 && (
                 <div
                     ref={dropdownRef}
-                    className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-200 overflow-hidden z-[1001] max-h-80 overflow-y-auto"
+                    className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-200 overflow-hidden z-[1001] max-h-96 overflow-y-auto"
                 >
                     {suggestions.map((suggestion, index) => {
-                        const isLocal = suggestion.source === 'local';
+                        const typeInfo = getTypeInfo(suggestion.type, suggestion.count, suggestion.category);
                         return (
                             <button
-                                key={suggestion.geoid || `${suggestion.name}-${index}`}
+                                key={`${suggestion.type}-${suggestion.name}-${index}`}
                                 onClick={() => handleSelect(suggestion)}
                                 onMouseEnter={() => setSelectedIndex(index)}
                                 className={`w-full px-4 py-3 flex items-start gap-3 text-left transition-colors ${
@@ -281,17 +408,15 @@ const SearchBar = ({ onLocationSelect }) => {
                                         : 'hover:bg-gray-50'
                                 }`}
                             >
-                                {isLocal ? (
-                                    <Building2 size={16} className="mt-0.5 flex-shrink-0 text-green-600" />
-                                ) : (
-                                    <MapPin size={16} className="mt-0.5 flex-shrink-0 text-blue-500" />
-                                )}
+                                <div className="mt-0.5 flex-shrink-0">
+                                    {getIcon(suggestion.type)}
+                                </div>
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm text-gray-800 truncate">
                                         {suggestion.name}
                                     </p>
-                                    <p className={`text-xs mt-0.5 ${isLocal ? 'text-green-600' : 'text-gray-400'}`}>
-                                        {isLocal ? '✓ Delhi Area' : 'External location'}
+                                    <p className={`text-xs mt-0.5 ${typeInfo.className}`}>
+                                        {typeInfo.label}
                                     </p>
                                 </div>
                             </button>
@@ -303,7 +428,8 @@ const SearchBar = ({ onLocationSelect }) => {
             {/* No results message */}
             {showDropdown && query.length >= 2 && suggestions.length === 0 && !isLoading && (
                 <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-200 p-4 z-[1001]">
-                    <p className="text-sm text-gray-500 text-center">No locations found</p>
+                    <p className="text-sm text-gray-500 text-center">No results found for "{query}"</p>
+                    <p className="text-xs text-gray-400 text-center mt-1">Try searching for areas, categories, or POI names</p>
                 </div>
             )}
         </div>

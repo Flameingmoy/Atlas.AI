@@ -89,6 +89,107 @@ export const searchAreas = async (query, limit = 10) => {
 };
 
 /**
+ * Unified search across areas, POIs, categories, and super categories
+ * @param {string} query - Search term
+ * @param {number} limit - Maximum results (default 15)
+ */
+export const unifiedSearch = async (query, limit = 15) => {
+    try {
+        const response = await axios.get(`${API_URL}/search/unified`, { params: { q: query, limit } });
+        return response.data;
+    } catch (error) {
+        console.error("Error in unified search:", error);
+        return [];
+    }
+};
+
+/**
+ * Search POIs by name
+ * @param {string} query - Search term
+ * @param {number} limit - Maximum results (default 10)
+ */
+export const searchPOIs = async (query, limit = 10) => {
+    try {
+        const response = await axios.get(`${API_URL}/pois/search`, { params: { q: query, limit } });
+        return response.data;
+    } catch (error) {
+        console.error("Error searching POIs:", error);
+        return [];
+    }
+};
+
+/**
+ * Search categories
+ * @param {string} query - Search term
+ * @param {number} limit - Maximum results (default 10)
+ */
+export const searchCategories = async (query, limit = 10) => {
+    try {
+        const response = await axios.get(`${API_URL}/categories/search`, { params: { q: query, limit } });
+        return response.data;
+    } catch (error) {
+        console.error("Error searching categories:", error);
+        return [];
+    }
+};
+
+/**
+ * Get all categories
+ */
+export const fetchCategories = async () => {
+    try {
+        const response = await axios.get(`${API_URL}/categories`);
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching categories:", error);
+        return [];
+    }
+};
+
+/**
+ * Get all super categories
+ */
+export const fetchSuperCategories = async () => {
+    try {
+        const response = await axios.get(`${API_URL}/super-categories`);
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching super categories:", error);
+        return [];
+    }
+};
+
+/**
+ * Get POIs by category
+ * @param {string} category - Category name
+ * @param {number} limit - Maximum results (default 500)
+ */
+export const fetchPOIsByCategory = async (category, limit = 500) => {
+    try {
+        const response = await axios.get(`${API_URL}/pois/by-category`, { params: { category, limit } });
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching POIs by category:", error);
+        return [];
+    }
+};
+
+/**
+ * Get POIs by super category
+ * @param {string} superCategory - Super category name
+ * @param {number} limit - Maximum results (default 500)
+ */
+export const fetchPOIsBySuperCategory = async (superCategory, limit = 500) => {
+    try {
+        const response = await axios.get(`${API_URL}/pois/by-super-category`, { params: { super_category: superCategory, limit } });
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching POIs by super category:", error);
+        return [];
+    }
+};
+
+/**
  * Get all Delhi areas with centroids
  */
 export const fetchAreas = async () => {

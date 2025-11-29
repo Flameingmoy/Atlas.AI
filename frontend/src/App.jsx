@@ -3,7 +3,7 @@ import Map from './components/Map';
 import LayerControl from './components/LayerControl';
 import SearchBar from './components/SearchBar';
 import { sendChatMessage } from './services/api';
-import { Send, Bot, User, Database, Table } from 'lucide-react';
+import { Send, Bot, User, Database, Table, X, Tag, Layers } from 'lucide-react';
 
 function App() {
   const [activeLayers, setActiveLayers] = useState(['competitors']);
@@ -12,6 +12,8 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [mapCenter, setMapCenter] = useState(null);
+  const [filteredPOIs, setFilteredPOIs] = useState(null); // For category/super_category filtering
+  const [activeFilter, setActiveFilter] = useState(null); // Track current filter
 
   const toggleLayer = (layer) => {
     setActiveLayers(prev =>
@@ -24,7 +26,35 @@ function App() {
   // Handle location selection from search
   const handleLocationSelect = (location) => {
     setSelectedLocation(location);
-    setMapCenter({ lat: location.lat, lon: location.lon, zoom: 14 });
+    setMapCenter({ lat: location.lat, lon: location.lon, zoom: 15 });
+    // Clear any active filter when navigating to a specific location
+    setFilteredPOIs(null);
+    setActiveFilter(null);
+  };
+
+  // Handle category/super_category selection
+  const handleCategorySelect = (filter) => {
+    setActiveFilter(filter);
+    if (!filter) {
+      setFilteredPOIs(null);
+    }
+  };
+
+  // Handle POIs loaded from category search
+  const handlePOIsLoad = (data) => {
+    if (data && data.pois) {
+      setFilteredPOIs(data.pois);
+      // Ensure competitors layer is active to show the filtered POIs
+      if (!activeLayers.includes('competitors')) {
+        setActiveLayers(prev => [...prev, 'competitors']);
+      }
+    }
+  };
+
+  // Clear filter
+  const handleClearFilter = () => {
+    setFilteredPOIs(null);
+    setActiveFilter(null);
   };
 
   const handleChatSubmit = async (e) => {
@@ -83,9 +113,34 @@ function App() {
           <h1 className="font-bold text-lg tracking-wide">ATLAS <span className="text-blue-400 font-light">AI</span></h1>
         </div>
         <div className="pointer-events-auto">
-          <SearchBar onLocationSelect={handleLocationSelect} />
+          <SearchBar 
+            onLocationSelect={handleLocationSelect}
+            onCategorySelect={handleCategorySelect}
+            onPOIsLoad={handlePOIsLoad}
+          />
         </div>
       </div>
+
+      {/* Active Filter Indicator */}
+      {activeFilter && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[1000] pointer-events-auto">
+          <div className={`flex items-center gap-2 px-4 py-2 rounded-full shadow-lg ${
+            activeFilter.type === 'category' 
+              ? 'bg-purple-600 text-white' 
+              : 'bg-orange-600 text-white'
+          }`}>
+            {activeFilter.type === 'category' ? <Tag size={16} /> : <Layers size={16} />}
+            <span className="font-medium">{activeFilter.name}</span>
+            <span className="opacity-80">({activeFilter.count?.toLocaleString()} places)</span>
+            <button 
+              onClick={handleClearFilter}
+              className="ml-2 hover:bg-white/20 rounded-full p-1"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
 
       <LayerControl activeLayers={activeLayers} toggleLayer={toggleLayer} />
 
@@ -93,6 +148,7 @@ function App() {
         activeLayers={activeLayers} 
         selectedLocation={selectedLocation}
         mapCenter={mapCenter}
+        filteredPOIs={filteredPOIs}
       />
 
       {/* Chat Interface */}

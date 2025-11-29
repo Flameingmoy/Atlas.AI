@@ -161,6 +161,277 @@ def search_areas(q: str, limit: int = 10):
         "type": "area"
     } for r in results]
 
+
+@router.get("/pois/search")
+def search_pois(q: str, limit: int = 10):
+    """
+    Search POIs by name with fuzzy matching.
+    Returns POIs with coordinates for map navigation.
+    """
+    query = """
+        SELECT id, name, category, ST_Y(geom) as lat, ST_X(geom) as lon
+        FROM delhi_points
+        WHERE name ILIKE %s
+        ORDER BY 
+            CASE WHEN LOWER(name) = LOWER(%s) THEN 0
+                 WHEN name ILIKE %s THEN 1
+                 ELSE 2 END,
+            name
+        LIMIT %s
+    """
+    search_term = f"%{q}%"
+    starts_with = f"{q}%"
+    results = execute_query(query, (search_term, q, starts_with, limit))
+    
+    return [{
+        "id": r[0],
+        "name": r[1],
+        "category": r[2],
+        "lat": r[3],
+        "lon": r[4],
+        "type": "poi"
+    } for r in results]
+
+
+@router.get("/categories")
+def get_categories():
+    """
+    Get all unique POI categories.
+    """
+    query = """
+        SELECT DISTINCT category 
+        FROM delhi_points 
+        WHERE category IS NOT NULL
+        ORDER BY category
+    """
+    results = execute_query(query)
+    return [r[0] for r in results]
+
+
+@router.get("/categories/search")
+def search_categories(q: str, limit: int = 10):
+    """
+    Search POI categories with fuzzy matching.
+    Returns matching categories with count of POIs.
+    """
+    query = """
+        SELECT category, COUNT(*) as count
+        FROM delhi_points
+        WHERE category ILIKE %s
+        GROUP BY category
+        ORDER BY 
+            CASE WHEN LOWER(category) = LOWER(%s) THEN 0
+                 WHEN category ILIKE %s THEN 1
+                 ELSE 2 END,
+            count DESC
+        LIMIT %s
+    """
+    search_term = f"%{q}%"
+    starts_with = f"{q}%"
+    results = execute_query(query, (search_term, q, starts_with, limit))
+    
+    return [{
+        "category": r[0],
+        "count": r[1],
+        "type": "category"
+    } for r in results]
+
+
+@router.get("/super-categories")
+def get_super_categories():
+    """
+    Get all unique super categories from points_super.
+    """
+    query = """
+        SELECT DISTINCT super_category 
+        FROM points_super 
+        WHERE super_category IS NOT NULL
+        ORDER BY super_category
+    """
+    results = execute_query(query)
+    return [r[0] for r in results]
+
+
+@router.get("/super-categories/search")
+def search_super_categories(q: str, limit: int = 10):
+    """
+    Search super categories with fuzzy matching.
+    Returns matching super categories with count of POIs.
+    """
+    query = """
+        SELECT super_category, COUNT(*) as count
+        FROM points_super
+        WHERE super_category ILIKE %s
+        GROUP BY super_category
+        ORDER BY 
+            CASE WHEN LOWER(super_category) = LOWER(%s) THEN 0
+                 WHEN super_category ILIKE %s THEN 1
+                 ELSE 2 END,
+            count DESC
+        LIMIT %s
+    """
+    search_term = f"%{q}%"
+    starts_with = f"{q}%"
+    results = execute_query(query, (search_term, q, starts_with, limit))
+    
+    return [{
+        "super_category": r[0],
+        "count": r[1],
+        "type": "super_category"
+    } for r in results]
+
+
+@router.get("/pois/by-category")
+def get_pois_by_category(category: str, limit: int = 500):
+    """
+    Get POIs filtered by category.
+    """
+    query = """
+        SELECT id, name, category, ST_Y(geom) as lat, ST_X(geom) as lon
+        FROM delhi_points
+        WHERE category = %s
+        LIMIT %s
+    """
+    results = execute_query(query, (category, limit))
+    
+    return [{
+        "id": r[0],
+        "name": r[1],
+        "category": r[2],
+        "lat": r[3],
+        "lon": r[4]
+    } for r in results]
+
+
+@router.get("/pois/by-super-category")
+def get_pois_by_super_category(super_category: str, limit: int = 500):
+    """
+    Get POIs filtered by super category.
+    """
+    query = """
+        SELECT id, name, category, ST_Y(geom) as lat, ST_X(geom) as lon, super_category
+        FROM points_super
+        WHERE super_category = %s
+        LIMIT %s
+    """
+    results = execute_query(query, (super_category, limit))
+    
+    return [{
+        "id": r[0],
+        "name": r[1],
+        "category": r[2],
+        "lat": r[3],
+        "lon": r[4],
+        "super_category": r[5]
+    } for r in results]
+
+
+@router.get("/search/unified")
+def unified_search(q: str, limit: int = 15):
+    """
+    Unified search across areas, POIs, categories, and super categories.
+    Returns combined results with type indicators for the frontend.
+    """
+    results = []
+    per_type_limit = max(3, limit // 4)
+    
+    # 1. Search areas (highest priority for location searches)
+    area_query = """
+        SELECT id, name, longitude, latitude 
+        FROM area_with_centroid 
+        WHERE name ILIKE %s
+        ORDER BY 
+            CASE WHEN LOWER(name) = LOWER(%s) THEN 0
+                 WHEN name ILIKE %s THEN 1
+                 ELSE 2 END,
+            name
+        LIMIT %s
+    """
+    search_term = f"%{q}%"
+    starts_with = f"{q}%"
+    areas = execute_query(area_query, (search_term, q, starts_with, per_type_limit))
+    for r in areas:
+        results.append({
+            "id": r[0],
+            "name": r[1],
+            "lon": r[2],
+            "lat": r[3],
+            "type": "area",
+            "icon": "building"
+        })
+    
+    # 2. Search categories
+    cat_query = """
+        SELECT category, COUNT(*) as count
+        FROM delhi_points
+        WHERE category ILIKE %s
+        GROUP BY category
+        ORDER BY 
+            CASE WHEN LOWER(category) = LOWER(%s) THEN 0
+                 WHEN category ILIKE %s THEN 1
+                 ELSE 2 END,
+            count DESC
+        LIMIT %s
+    """
+    categories = execute_query(cat_query, (search_term, q, starts_with, per_type_limit))
+    for r in categories:
+        results.append({
+            "name": r[0],
+            "count": r[1],
+            "type": "category",
+            "icon": "tag"
+        })
+    
+    # 3. Search super categories
+    super_query = """
+        SELECT super_category, COUNT(*) as count
+        FROM points_super
+        WHERE super_category ILIKE %s
+        GROUP BY super_category
+        ORDER BY 
+            CASE WHEN LOWER(super_category) = LOWER(%s) THEN 0
+                 WHEN super_category ILIKE %s THEN 1
+                 ELSE 2 END,
+            count DESC
+        LIMIT %s
+    """
+    super_cats = execute_query(super_query, (search_term, q, starts_with, per_type_limit))
+    for r in super_cats:
+        results.append({
+            "name": r[0],
+            "count": r[1],
+            "type": "super_category",
+            "icon": "layers"
+        })
+    
+    # 4. Search POI names (lower priority, only if we have room)
+    remaining = limit - len(results)
+    if remaining > 0:
+        poi_query = """
+            SELECT id, name, category, ST_Y(geom) as lat, ST_X(geom) as lon
+            FROM delhi_points
+            WHERE name ILIKE %s
+            ORDER BY 
+                CASE WHEN LOWER(name) = LOWER(%s) THEN 0
+                     WHEN name ILIKE %s THEN 1
+                     ELSE 2 END,
+                name
+            LIMIT %s
+        """
+        pois = execute_query(poi_query, (search_term, q, starts_with, min(remaining, per_type_limit)))
+        for r in pois:
+            results.append({
+                "id": r[0],
+                "name": r[1],
+                "category": r[2],
+                "lat": r[3],
+                "lon": r[4],
+                "type": "poi",
+                "icon": "map-pin"
+            })
+    
+    return results[:limit]
+
 @router.get("/delhi/bounds")
 def get_delhi_bounds():
     """
