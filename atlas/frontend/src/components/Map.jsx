@@ -23,26 +23,41 @@ const MapUpdater = ({ center, zoom }) => {
     return null;
 };
 
+// Color mapping for POI categories
+const getCategoryColor = (category) => {
+    const colorMap = {
+        'Restaurant': '#EF4444',    // Red
+        'Cafe': '#F59E0B',          // Amber/Orange
+        'Mall': '#8B5CF6',          // Purple
+        'Monument': '#10B981',      // Green
+        'Market': '#EC4899',        // Pink
+        'Hospital': '#3B82F6',      // Blue
+        'Metro Station': '#F97316', // Orange
+        'default': '#6B7280'        // Gray
+    };
+    return colorMap[category] || colorMap['default'];
+};
+
 const Map = ({ activeLayers }) => {
     const [pois, setPois] = useState([]);
-    const [lng, setLng] = useState(77.5946);
-    const [lat, setLat] = useState(12.9716);
+    const [lng, setLng] = useState(77.2090);
+    const [lat, setLat] = useState(28.6139);
     const [heatmapPoints, setHeatmapPoints] = useState([]);
 
-    // Bangalore Center
-    const position = [12.9716, 77.5946];
+    // Delhi Center
+    const position = [28.6139, 77.2090];
 
     useEffect(() => {
         const loadData = async () => {
             const data = await fetchPOIs();
             setPois(data);
 
-            // Mock Heatmap Data (Bangalore)
+            // Mock Heatmap Data (Delhi)
             setHeatmapPoints([
-                { lat: 12.9716, lon: 77.5946, intensity: 1.0 }, // MG Road area
-                { lat: 12.9352, lon: 77.6245, intensity: 0.9 }, // Koramangala
-                { lat: 12.9784, lon: 77.6408, intensity: 0.8 }, // Indiranagar
-                { lat: 13.0012, lon: 77.5703, intensity: 0.7 }, // Malleshwaram
+                { lat: 28.6139, lon: 77.2090, intensity: 1.0 }, // Connaught Place
+                { lat: 28.5244, lon: 77.1855, intensity: 0.9 }, // Hauz Khas
+                { lat: 28.6692, lon: 77.4538, intensity: 0.8 }, // Noida
+                { lat: 28.5355, lon: 77.3910, intensity: 0.7 }, // Nehru Place
             ]);
         };
         loadData();
@@ -62,21 +77,33 @@ const Map = ({ activeLayers }) => {
             />
 
             {/* Competitors Layer */}
-            {activeLayers.includes('competitors') && pois.map((poi, idx) => (
-                <CircleMarker
-                    key={`poi-${idx}`}
-                    center={[poi.lat, poi.lon]}
-                    pathOptions={{ color: '#F87171', fillColor: '#F87171', fillOpacity: 0.7 }}
-                    radius={6}
-                >
-                    <Popup>
-                        <div className="text-gray-900">
-                            <h3 className="font-bold">{poi.name}</h3>
-                            <p className="text-sm">Category: {poi.category || 'Retail'}</p>
-                        </div>
-                    </Popup>
-                </CircleMarker>
-            ))}
+            {activeLayers.includes('competitors') && pois.map((poi, idx) => {
+                const categoryColor = getCategoryColor(poi.category);
+                return (
+                    <CircleMarker
+                        key={`poi-${idx}`}
+                        center={[poi.lat, poi.lon]}
+                        pathOptions={{ 
+                            color: categoryColor, 
+                            fillColor: categoryColor, 
+                            fillOpacity: 0.7,
+                            weight: 2
+                        }}
+                        radius={6}
+                    >
+                        <Popup>
+                            <div className="text-gray-900">
+                                <h3 className="font-bold">{poi.name}</h3>
+                                <p className="text-sm">Category: {poi.category || 'Unknown'}</p>
+                                <div 
+                                    className="inline-block w-3 h-3 rounded-full mt-1" 
+                                    style={{ backgroundColor: categoryColor }}
+                                ></div>
+                            </div>
+                        </Popup>
+                    </CircleMarker>
+                );
+            })}
 
             {/* Simple Heatmap Simulation (Circles for now, real heatmap needs plugin) */}
             {activeLayers.includes('heatmap') && heatmapPoints.map((pt, idx) => (
@@ -91,6 +118,47 @@ const Map = ({ activeLayers }) => {
                     radius={30}
                 />
             ))}
+
+            {/* Category Legend */}
+            {activeLayers.includes('competitors') && (
+                <div className="leaflet-bottom leaflet-right">
+                    <div className="leaflet-control" style={{ marginBottom: '10px', marginRight: '10px' }}>
+                        <div className="bg-white/95 backdrop-blur-sm rounded-lg shadow-xl p-3 text-xs">
+                            <h4 className="font-bold text-gray-800 mb-2">Categories</h4>
+                            <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#EF4444' }}></div>
+                                    <span className="text-gray-700">Restaurant</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#F59E0B' }}></div>
+                                    <span className="text-gray-700">Cafe</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#8B5CF6' }}></div>
+                                    <span className="text-gray-700">Mall</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#10B981' }}></div>
+                                    <span className="text-gray-700">Monument</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#EC4899' }}></div>
+                                    <span className="text-gray-700">Market</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#3B82F6' }}></div>
+                                    <span className="text-gray-700">Hospital</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#F97316' }}></div>
+                                    <span className="text-gray-700">Metro Station</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
         </MapContainer>
     );

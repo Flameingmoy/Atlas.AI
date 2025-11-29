@@ -1,77 +1,190 @@
 import random
-import uuid
-import h3
 import duckdb
-from shapely.geometry import Point, Polygon
+from shapely.geometry import Point, Polygon, MultiPolygon
 import json
 from app.core.db import get_db_connection, init_db
 
-def generate_bangalore_data():
+def generate_delhi_data():
+    """
+    Generate sample data for Delhi geographic database.
+    Creates data for: delhi_area, delhi_city, delhi_pincode, delhi_points
+    """
     conn = get_db_connection()
     
     # Clear existing data
-    conn.execute("DELETE FROM pois")
-    conn.execute("DELETE FROM demographics")
+    conn.execute("DELETE FROM delhi_area")
+    conn.execute("DELETE FROM delhi_city")
+    conn.execute("DELETE FROM delhi_pincode")
+    conn.execute("DELETE FROM delhi_points")
     
-    # Bangalore, India approximate center
-    bangalore_center = (12.9716, 77.5946)
+    # Delhi, India center coordinates
+    delhi_center = (28.6139, 77.2090)  # Lat, Lon
     
-    # 1. Generate Demographics (H3 Hexagons)
-    # Get all hexes at res 9 within a ring of the center
-    # v4 API: latlng_to_cell, grid_disk
-    center_h3 = h3.latlng_to_cell(bangalore_center[0], bangalore_center[1], 9)
-    h3_indices = h3.grid_disk(center_h3, 50)
+    print("Seeding Delhi geographic data...")
     
-    print(f"Seeding {len(h3_indices)} demographic hexes...")
+    # 1. Generate delhi_city (City boundary)
+    print("Seeding delhi_city...")
+    # Create a rough polygon around Delhi center (approximate boundary)
+    city_boundary_coords = [
+        (77.0, 28.4),   # Southwest
+        (77.4, 28.4),   # Southeast
+        (77.4, 28.9),   # Northeast
+        (77.0, 28.9),   # Northwest
+        (77.0, 28.4)    # Close polygon
+    ]
+    city_polygon = Polygon(city_boundary_coords)
+    city_wkt = city_polygon.wkt
     
-    for h3_idx in h3_indices:
-        pop_density = random.uniform(5000, 50000)
-        income = random.uniform(10000, 80000)
-        traffic = random.uniform(5, 10)
+    conn.execute("""
+        INSERT INTO delhi_city (id, name, geom)
+        VALUES (?, ?, ST_GeomFromText(?))
+    """, (1, "Delhi", city_wkt))
+    
+    # 2. Generate delhi_area (Districts/Areas)
+    print("Seeding delhi_area...")
+    delhi_areas = [
+        "Central Delhi",
+        "North Delhi",
+        "South Delhi",
+        "East Delhi",
+        "West Delhi",
+        "New Delhi",
+        "North West Delhi",
+        "North East Delhi",
+        "South West Delhi",
+        "South East Delhi",
+        "Shahdara"
+    ]
+    
+    for idx, area_name in enumerate(delhi_areas, start=1):
+        # Generate a random polygon within Delhi for each area
+        lat_offset = random.uniform(-0.15, 0.15)
+        lon_offset = random.uniform(-0.15, 0.15)
         
-        # Get boundary polygon for visualization
-        # v4 API: cell_to_boundary returns tuple of (lat, lon)
-        boundary_coords = h3.cell_to_boundary(h3_idx) # (lat, lon)
-        # Shapely expects (lon, lat), so swap
-        boundary_coords_lonlat = [(c[1], c[0]) for c in boundary_coords]
-        poly = Polygon(boundary_coords_lonlat)
-        wkt_boundary = poly.wkt
+        base_lat = delhi_center[0] + lat_offset
+        base_lon = delhi_center[1] + lon_offset
+        
+        # Create a small polygon for the area
+        area_coords = [
+            (base_lon - 0.05, base_lat - 0.05),
+            (base_lon + 0.05, base_lat - 0.05),
+            (base_lon + 0.05, base_lat + 0.05),
+            (base_lon - 0.05, base_lat + 0.05),
+            (base_lon - 0.05, base_lat - 0.05)
+        ]
+        area_polygon = Polygon(area_coords)
+        area_wkt = area_polygon.wkt
         
         conn.execute("""
-            INSERT INTO demographics (h3_index, population_density, median_income, traffic_score, boundary)
-            VALUES (?, ?, ?, ?, ST_GeomFromText(?))
-        """, (h3_idx, pop_density, int(income), traffic, wkt_boundary))
+            INSERT INTO delhi_area (id, name, geom)
+            VALUES (?, ?, ST_GeomFromText(?))
+        """, (idx, area_name, area_wkt))
+    
+    # 3. Generate delhi_pincode (Pincodes)
+    print("Seeding delhi_pincode...")
+    # Sample Delhi pincodes
+    delhi_pincodes = [
+        "110001", "110002", "110003", "110004", "110005",
+        "110006", "110007", "110008", "110009", "110010",
+        "110011", "110012", "110013", "110014", "110015",
+        "110016", "110017", "110018", "110019", "110020",
+        "110021", "110022", "110023", "110024", "110025",
+        "110026", "110027", "110028", "110029", "110030"
+    ]
+    
+    for idx, pincode in enumerate(delhi_pincodes, start=1):
+        # Generate a random small polygon for each pincode area
+        lat_offset = random.uniform(-0.2, 0.2)
+        lon_offset = random.uniform(-0.2, 0.2)
         
-    # 2. Generate POIs
-    categories = {
-        "Coffee": ["Third Wave Coffee", "Starbucks", "Rameshwaram Cafe", "Blue Tokai"],
-        "Gym": ["Cult.fit", "Gold's Gym", "Snap Fitness", "Volt Energy"],
-        "Retail": ["Phoenix Marketcity", "Orion Mall", "More Supermarket", "Reliance Smart"]
+        base_lat = delhi_center[0] + lat_offset
+        base_lon = delhi_center[1] + lon_offset
+        
+        # Create a small polygon for the pincode area
+        pin_coords = [
+            (base_lon - 0.02, base_lat - 0.02),
+            (base_lon + 0.02, base_lat - 0.02),
+            (base_lon + 0.02, base_lat + 0.02),
+            (base_lon - 0.02, base_lat + 0.02),
+            (base_lon - 0.02, base_lat - 0.02)
+        ]
+        pin_polygon = Polygon(pin_coords)
+        pin_wkt = pin_polygon.wkt
+        
+        conn.execute("""
+            INSERT INTO delhi_pincode (id, name, geom)
+            VALUES (?, ?, ST_GeomFromText(?))
+        """, (idx, pincode, pin_wkt))
+    
+    # 4. Generate delhi_points (Points of Interest)
+    print("Seeding delhi_points...")
+    
+    # Delhi-specific POI categories and names
+    poi_categories = {
+        "Restaurant": [
+            "Karim's", "Bukhara", "Indian Accent", "Moti Mahal",
+            "Paranthe Wali Gali", "Saravana Bhavan", "Haldiram's",
+            "Bikanervala", "Kake Da Hotel", "Gulati Restaurant"
+        ],
+        "Cafe": [
+            "Starbucks", "Cafe Coffee Day", "Blue Tokai Coffee",
+            "Indian Coffee House", "Café Turtle", "Diva Spiced",
+            "Chai Point", "Jugmug Thela", "Kunzum Travel Cafe"
+        ],
+        "Mall": [
+            "Select Citywalk", "DLF Promenade", "Ambience Mall",
+            "Pacific Mall", "Vegas Mall", "DLF Mall of India",
+            "MGF Metropolitan Mall", "Ansal Plaza"
+        ],
+        "Monument": [
+            "Red Fort", "Qutub Minar", "India Gate", "Humayun's Tomb",
+            "Lotus Temple", "Akshardham Temple", "Jama Masjid",
+            "Lodhi Garden", "Purana Qila", "Safdarjung Tomb"
+        ],
+        "Market": [
+            "Chandni Chowk", "Sarojini Nagar", "Lajpat Nagar",
+            "Connaught Place", "Khan Market", "Dilli Haat",
+            "Janpath Market", "Karol Bagh", "Nehru Place"
+        ],
+        "Hospital": [
+            "AIIMS", "Safdarjung Hospital", "Apollo Hospital",
+            "Max Hospital", "Fortis Hospital", "Medanta",
+            "BLK Hospital", "Sir Ganga Ram Hospital"
+        ],
+        "Metro Station": [
+            "Rajiv Chowk", "Kashmere Gate", "Central Secretariat",
+            "Chandni Chowk", "New Delhi", "Connaught Place",
+            "Hauz Khas", "Nehru Place", "Dwarka Sector 21"
+        ]
     }
     
-    print("Seeding 100 POIs...")
-    for _ in range(100):
-        cat = random.choice(list(categories.keys()))
-        name = random.choice(categories[cat])
+    point_count = 200
+    for idx in range(1, point_count + 1):
+        category = random.choice(list(poi_categories.keys()))
+        name = random.choice(poi_categories[category])
         
-        lat = bangalore_center[0] + random.uniform(-0.05, 0.05)
-        lon = bangalore_center[1] + random.uniform(-0.05, 0.05)
+        # Generate random point within Delhi area
+        lat = delhi_center[0] + random.uniform(-0.2, 0.2)
+        lon = delhi_center[1] + random.uniform(-0.2, 0.2)
         
         point = Point(lon, lat)
-        wkt_point = point.wkt
-        
-        meta = json.dumps({"rating": random.uniform(3.0, 5.0), "open_late": random.choice([True, False])})
+        point_wkt = point.wkt
         
         conn.execute("""
-            INSERT INTO pois (id, name, category, subcategory, location, metadata_json)
-            VALUES (?, ?, ?, ?, ST_GeomFromText(?), ?)
-        """, (str(uuid.uuid4()), name, cat, cat, wkt_point, meta))
-        
-    conn.commit() # DuckDB auto-commits usually, but explicit is fine
+            INSERT INTO delhi_points (id, name, category, geom)
+            VALUES (?, ?, ?, ST_GeomFromText(?))
+        """, (idx, name, category, point_wkt))
+    
+    conn.commit()
     conn.close()
-    print("Seeding Complete!")
+    
+    print(f"Seeding Complete!")
+    print(f"  - 1 city boundary")
+    print(f"  - {len(delhi_areas)} areas")
+    print(f"  - {len(delhi_pincodes)} pincodes")
+    print(f"  - {point_count} points of interest")
 
 if __name__ == "__main__":
     # Ensure tables exist
     init_db()
-    generate_bangalore_data()
+    generate_delhi_data()

@@ -2,15 +2,18 @@ import axios from 'axios';
 
 const API_URL = 'http://localhost:8000/api/v1';
 
-export const fetchPOIs = async (category) => {
+export const fetchPoints = async (category) => {
     try {
-        const response = await axios.get(`${API_URL}/pois`, { params: { category } });
+        const response = await axios.get(`${API_URL}/points`, { params: { category } });
         return response.data;
     } catch (error) {
-        console.error("Error fetching POIs:", error);
+        console.error("Error fetching points:", error);
         return [];
     }
 };
+
+// Backward compatibility alias
+export const fetchPOIs = fetchPoints;
 
 export const fetchClusters = async (points) => {
     try {

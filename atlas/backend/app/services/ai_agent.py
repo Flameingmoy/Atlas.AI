@@ -4,6 +4,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from typing import List, Dict, Any
 import json
 import os
+from app.services.text_to_sql_service import TextToSQLService
 
 # Define Tools
 @tool
@@ -17,17 +18,34 @@ def set_map_layer(layer_name: str):
     return {"action": "setLayer", "layer": layer_name}
 
 @tool
-def get_bangalore_demographics():
+def get_delhi_info():
     """
-    Returns demographic data for Bangalore, India.
-    Useful for answering questions about population, income, or traffic.
+    Returns general information about Delhi, India.
+    Useful for answering questions about Delhi's characteristics.
     """
     return {
-        "city": "Bangalore",
-        "population_density": "Very High (11,000/sq km)",
-        "median_income": "₹8,00,000 (Tech Sector High)",
-        "traffic_hotspots": ["Silk Board", "Tin Factory", "MG Road", "Outer Ring Road"]
+        "city": "Delhi",
+        "capital": "National Capital Territory of India",
+        "population": "~20 million (metro area)",
+        "area": "1,484 km²",
+        "known_for": "Historical monuments, government center, diverse culture"
     }
+
+@tool
+def query_database(question: str):
+    """
+    Query the database using natural language.
+    Use this tool when the user asks data questions like:
+    - "How many points of interest are there?"
+    - "Show me all areas in Delhi"
+    - "What are the categories in delhi_points?"
+    - "List all pincodes"
+    - "Show me points by category"
+    Returns structured data results from the database.
+    """
+    sql_service = TextToSQLService()
+    result = sql_service.query_database_with_nl(question)
+    return result
 
 class AIAgentService:
     def __init__(self):
@@ -43,17 +61,33 @@ class AIAgentService:
         )
         
         # Bind tools to the LLM
-        self.tools = [set_map_layer, get_bangalore_demographics]
+        self.tools = [set_map_layer, get_delhi_info, query_database]
         self.llm_with_tools = self.llm.bind_tools(self.tools)
         
         self.system_prompt = SystemMessage(content="""
         You are Atlas, an intelligent geospatial assistant.
-        Your goal is to help users find optimal business locations in Bangalore, India (the Silicon Valley of India).
+        Your goal is to help users explore and analyze geographic data for Delhi, India (National Capital Territory).
         
-        You have control over a map interface.
-        - If the user asks to see something visual (e.g., "Show me traffic", "Where are the competitors?"), 
+        You have control over a map interface and can query the database.
+        
+        TOOL USAGE:
+        - If the user asks to see something visual (e.g., "Show me areas", "Where are the points?"), 
           call the `set_map_layer` tool.
-        - If the user asks for data/stats, call `get_bangalore_demographics` or answer from your knowledge.
+        - If the user asks for general information about Delhi, call `get_delhi_info`.
+        - If the user asks specific data questions about areas, pincodes, points of interest, or wants to query the database,
+          call the `query_database` tool with their question.
+        
+        The database contains:
+        - delhi_area: Area/district boundaries
+        - delhi_city: City boundaries
+        - delhi_pincode: Pincode boundaries
+        - delhi_points: Points of interest with categories
+        
+        Examples of when to use query_database:
+        - "How many points are in the database?"
+        - "Show me all areas"
+        - "What categories exist in delhi_points?"
+        - "List all pincodes"
         
         Always be concise and professional.
         """)
@@ -85,13 +119,25 @@ class AIAgentService:
                     if not response_data["text"]:
                         response_data["text"] = f"I've switched the map to show {tool_args.get('layer_name')}."
                 
-                elif tool_name == "get_austin_demographics":
-                    # For data tools, we might want to feed the result back to the LLM
-                    # But for this prototype, let's just return the data or have the LLM describe it.
-                    # Since qwen3:32b is powerful, let's actually run the tool and feed it back?
-                    # For simplicity/speed in prototype, let's just return the raw data in text if needed,
-                    # or let the LLM hallucinate/use its internal knowledge if it didn't call the tool for data.
-                    # Actually, let's just let the LLM handle the conversation.
+                elif tool_name == "get_delhi_info":
+                    # Return Delhi general info
                     pass
+                
+                elif tool_name == "query_database":
+                    # Execute the database query tool
+                    from app.services.text_to_sql_service import TextToSQLService
+                    sql_service = TextToSQLService()
+                    query_result = sql_service.query_database_with_nl(tool_args.get("question", ""))
+                    
+                    response_data["actions"].append({
+                        "type": "databaseQuery",
+                        "result": query_result
+                    })
+                    
+                    # Update text response with the summary
+                    if query_result.get("success"):
+                        response_data["text"] = query_result.get("summary", "Query executed successfully.")
+                    else:
+                        response_data["text"] = f"Sorry, I encountered an error: {query_result.get('error', 'Unknown error')}"
 
         return response_data

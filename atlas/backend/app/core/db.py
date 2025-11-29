@@ -22,40 +22,51 @@ def get_db_connection():
 
 def init_db():
     """
-    Initializes the database schema.
+    Initializes the database schema for Delhi geographic data.
+    Creates tables: delhi_area, delhi_city, delhi_pincode, delhi_points
     """
     conn = get_db_connection()
     
-    # Create POIs table
+    # Create delhi_area table - Area/district boundaries
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS pois (
-            id UUID PRIMARY KEY,
+        CREATE TABLE IF NOT EXISTS delhi_area (
+            id INTEGER,
             name VARCHAR,
-            category VARCHAR,
-            subcategory VARCHAR,
-            location GEOMETRY,
-            metadata_json JSON
+            geom GEOMETRY
         );
     """)
     
-    # Create Demographics table
-    # Storing H3 index as string (VARCHAR) or UINT64. 
-    # H3 extension usually works with UINT64 (H3Index).
-    # Let's check docs or assume string for safety/readability first, 
-    # but H3 functions might return uint64.
-    # Let's use VARCHAR for the primary key to be safe with frontend JSON.
+    # Create delhi_city table - City boundaries
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS demographics (
-            h3_index VARCHAR PRIMARY KEY,
-            population_density DOUBLE,
-            median_income INTEGER,
-            traffic_score DOUBLE,
-            boundary GEOMETRY
+        CREATE TABLE IF NOT EXISTS delhi_city (
+            id INTEGER,
+            name VARCHAR,
+            geom GEOMETRY
+        );
+    """)
+    
+    # Create delhi_pincode table - Pincode/postal code boundaries
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS delhi_pincode (
+            id INTEGER,
+            name VARCHAR,
+            geom GEOMETRY
+        );
+    """)
+    
+    # Create delhi_points table - Points of interest
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS delhi_points (
+            id INTEGER,
+            name VARCHAR,
+            category VARCHAR,
+            geom GEOMETRY
         );
     """)
     
     conn.close()
-    print("Database initialized successfully.")
+    print("Database initialized successfully with Delhi schema.")
+    print("Tables created: delhi_area, delhi_city, delhi_pincode, delhi_points")
 
 if __name__ == "__main__":
     init_db()

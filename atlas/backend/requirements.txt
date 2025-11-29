@@ -11,3 +11,6 @@ langchain-ollama
 langchain-groq
 duckdb
 python-dotenv
+groq
+pandas
+sqlparse

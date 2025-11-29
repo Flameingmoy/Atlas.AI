@@ -12,11 +12,14 @@ router = APIRouter()
 def health_check():
     return {"status": "ok", "version": "0.1.0", "db": "duckdb"}
 
-@router.get("/pois", response_model=List[dict])
-def get_pois(category: Optional[str] = None):
+@router.get("/points", response_model=List[dict])
+def get_points(category: Optional[str] = None):
+    """
+    Get points of interest from delhi_points table
+    """
     conn = get_db_connection()
     
-    query = "SELECT id, name, category, ST_Y(location) as lat, ST_X(location) as lon FROM pois"
+    query = "SELECT id, name, category, ST_Y(geom) as lat, ST_X(geom) as lon FROM delhi_points"
     params = []
     
     if category:
@@ -27,17 +30,57 @@ def get_pois(category: Optional[str] = None):
     conn.close()
     
     # Format response
-    pois = []
+    points = []
     for r in results:
-        pois.append({
-            "id": str(r[0]),
+        points.append({
+            "id": r[0],
             "name": r[1],
             "category": r[2],
             "lat": r[3],
             "lon": r[4]
         })
         
-    return pois
+    return points
+
+@router.get("/areas", response_model=List[dict])
+def get_areas():
+    """
+    Get all areas/districts from delhi_area table
+    """
+    conn = get_db_connection()
+    
+    query = "SELECT id, name FROM delhi_area"
+    results = conn.execute(query).fetchall()
+    conn.close()
+    
+    areas = []
+    for r in results:
+        areas.append({
+            "id": r[0],
+            "name": r[1]
+        })
+        
+    return areas
+
+@router.get("/pincodes", response_model=List[dict])
+def get_pincodes():
+    """
+    Get all pincodes from delhi_pincode table
+    """
+    conn = get_db_connection()
+    
+    query = "SELECT id, name FROM delhi_pincode"
+    results = conn.execute(query).fetchall()
+    conn.close()
+    
+    pincodes = []
+    for r in results:
+        pincodes.append({
+            "id": r[0],
+            "pincode": r[1]
+        })
+        
+    return pincodes
 
 @router.post("/analyze/score")
 def calculate_score(
