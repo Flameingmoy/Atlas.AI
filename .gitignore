@@ -19,4 +19,5 @@ coverage/
 
 # Data
 data/blue_essence.json
+data/delhi.db
 *.geojson
