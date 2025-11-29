@@ -1,6 +1,8 @@
 import axios from 'axios';
 
-const API_URL = '/api';
+// In development, the Vite proxy should forward /api to the backend
+// In production, nginx routes /api to the backend
+const API_URL = '/api/v1';
 
 export const fetchPoints = async (category) => {
     try {
@@ -42,6 +44,66 @@ export const fetchBoundary = async () => {
     } catch (error) {
         console.error("Error fetching boundary:", error);
         return null;
+    }
+};
+
+// ============================================
+// Delhi Database API Functions
+// ============================================
+
+/**
+ * Search areas within Delhi by name
+ * @param {string} query - Search term
+ * @param {number} limit - Maximum results (default 10)
+ */
+export const searchAreas = async (query, limit = 10) => {
+    try {
+        const response = await axios.get(`${API_URL}/areas/search`, { params: { q: query, limit } });
+        return response.data;
+    } catch (error) {
+        console.error("Error searching areas:", error);
+        return [];
+    }
+};
+
+/**
+ * Get all Delhi areas with centroids
+ */
+export const fetchAreas = async () => {
+    try {
+        const response = await axios.get(`${API_URL}/areas`);
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching areas:", error);
+        return [];
+    }
+};
+
+/**
+ * Get Delhi city bounding box from database
+ */
+export const fetchDelhiBounds = async () => {
+    try {
+        const response = await axios.get(`${API_URL}/delhi/bounds`);
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching Delhi bounds:", error);
+        return null;
+    }
+};
+
+/**
+ * Check if a point is within Delhi city boundary (precise geometry check)
+ * @param {number} lat - Latitude
+ * @param {number} lon - Longitude
+ */
+export const checkPointInDelhi = async (lat, lon) => {
+    try {
+        const response = await axios.get(`${API_URL}/delhi/contains`, { params: { lat, lon } });
+        return response.data.is_inside;
+    } catch (error) {
+        console.error("Error checking point in Delhi:", error);
+        return false;
     }
 };
 

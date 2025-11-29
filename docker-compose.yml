@@ -6,11 +6,13 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./data/delhi.db:/app/data/delhi.duckdb
+      - ./data:/app/data
     environment:
       - LATLONG_TOKEN=${LATLONG_TOKEN}
-      - DATABASE_PATH=/app/data/delhi.duckdb
+      - DATABASE_PATH=/app/data/delhi.db
       - GROQ_API_KEY=${GROQ_API_KEY}
+    env_file:
+      - .env
 
   frontend:
     build: ./frontend

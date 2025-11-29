@@ -1,7 +1,14 @@
 import duckdb
 import os
+from pathlib import Path
 
-DB_PATH = os.getenv("DATABASE_PATH", "atlas.duckdb")
+# Get the project root directory (backend's parent)
+# This allows the path to work regardless of where the script is run from
+_BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+_PROJECT_ROOT = _BACKEND_DIR.parent
+_DEFAULT_DB_PATH = str(_PROJECT_ROOT / "data" / "delhi.db")
+
+DB_PATH = os.getenv("DATABASE_PATH", _DEFAULT_DB_PATH)
 
 def get_db_connection():
     """

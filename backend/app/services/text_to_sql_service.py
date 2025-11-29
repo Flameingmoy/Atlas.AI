@@ -1,6 +1,7 @@
 import duckdb
 import json
 import os
+from pathlib import Path
 from groq import Groq
 from typing import Tuple, Optional, Dict, Any, List
 import pandas as pd
@@ -8,14 +9,19 @@ import numpy as np
 from uuid import UUID
 from decimal import Decimal
 
+# Get the project root directory for default database path
+_SERVICES_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _SERVICES_DIR.parent.parent.parent
+_DEFAULT_DB_PATH = str(_PROJECT_ROOT / "data" / "delhi.db")
+
 class TextToSQLService:
     """
     Service for converting natural language questions to SQL queries
     and executing them against the DuckDB database.
     """
     
-    def __init__(self, database_path: str = "atlas.duckdb"):
-        self.database_path = database_path
+    def __init__(self, database_path: str = None):
+        self.database_path = database_path or os.getenv("DATABASE_PATH", _DEFAULT_DB_PATH)
         groq_api_key = os.getenv("GROQ_API_KEY")
         if not groq_api_key:
             raise ValueError("GROQ_API_KEY environment variable is not set")

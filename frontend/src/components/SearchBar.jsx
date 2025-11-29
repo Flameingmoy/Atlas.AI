@@ -1,37 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, MapPin, X, Loader2, AlertCircle } from 'lucide-react';
-import { fetchAutocomplete, fetchGeocode } from '../services/api';
+import { Search, MapPin, X, Loader2, AlertCircle, Building2 } from 'lucide-react';
+import { fetchAutocomplete, fetchGeocode, searchAreas, checkPointInDelhi } from '../services/api';
 
-// Delhi bounding box (approximate) - used for quick validation
+// Delhi bounding box from database: Lon [76.8388, 77.3475], Lat [28.4043, 28.8835]
 const DELHI_BOUNDS = {
-    minLat: 28.40,
-    maxLat: 28.90,
-    minLon: 76.80,
-    maxLon: 77.35
+    minLat: 28.4043,
+    maxLat: 28.8835,
+    minLon: 76.8388,
+    maxLon: 77.3475
 };
 
-// Check if coordinates are within Delhi bounds
-const isWithinDelhi = (lat, lon) => {
+// Quick bounding box check
+const isWithinDelhiBounds = (lat, lon) => {
     return (
         lat >= DELHI_BOUNDS.minLat &&
         lat <= DELHI_BOUNDS.maxLat &&
         lon >= DELHI_BOUNDS.minLon &&
         lon <= DELHI_BOUNDS.maxLon
-    );
-};
-
-// Check if suggestion name likely refers to Delhi
-const isLikelyDelhi = (name) => {
-    const lowerName = name.toLowerCase();
-    return (
-        lowerName.includes('delhi') ||
-        lowerName.includes('new delhi') ||
-        lowerName.includes('ncr') ||
-        lowerName.includes('noida') ||
-        lowerName.includes('gurgaon') ||
-        lowerName.includes('gurugram') ||
-        lowerName.includes('faridabad') ||
-        lowerName.includes('ghaziabad')
     );
 };
 
@@ -46,7 +31,7 @@ const SearchBar = ({ onLocationSelect }) => {
     const dropdownRef = useRef(null);
     const debounceRef = useRef(null);
 
-    // Debounced autocomplete search
+    // Debounced hybrid search: local areas + external API
     useEffect(() => {
         if (debounceRef.current) {
             clearTimeout(debounceRef.current);
@@ -62,24 +47,47 @@ const SearchBar = ({ onLocationSelect }) => {
         setIsLoading(true);
         setError(null);
         debounceRef.current = setTimeout(async () => {
-            // Bias results towards Delhi
-            const result = await fetchAutocomplete(query, 28.6139, 77.1025, 10);
-            
-            if (result.status === 'success' && result.data) {
-                // Filter suggestions to prioritize Delhi-related results
-                const filteredSuggestions = result.data.filter(s => isLikelyDelhi(s.name));
-                
-                // If we have Delhi results, show them; otherwise show all with a note
-                if (filteredSuggestions.length > 0) {
-                    setSuggestions(filteredSuggestions);
-                } else {
-                    // Show original results but they'll be validated on selection
-                    setSuggestions(result.data);
-                }
-                setShowDropdown(true);
-            } else {
-                setSuggestions([]);
+            // Search both local database and external API in parallel
+            const [localResults, externalResult] = await Promise.all([
+                searchAreas(query, 5),  // Local Delhi areas from database
+                fetchAutocomplete(query, 28.6139, 77.1025, 5)  // External API
+            ]);
+
+            const combinedSuggestions = [];
+
+            // Add local area results first (guaranteed to be in Delhi)
+            if (localResults && localResults.length > 0) {
+                localResults.forEach(area => {
+                    combinedSuggestions.push({
+                        name: area.name,
+                        lat: area.lat,
+                        lon: area.lon,
+                        type: 'area',
+                        source: 'local'
+                    });
+                });
             }
+
+            // Add external results (filter for Delhi-related)
+            if (externalResult?.status === 'success' && externalResult.data) {
+                externalResult.data.forEach(item => {
+                    // Avoid duplicates with local results
+                    const isDuplicate = combinedSuggestions.some(
+                        s => s.name.toLowerCase() === item.name.toLowerCase()
+                    );
+                    if (!isDuplicate) {
+                        combinedSuggestions.push({
+                            name: item.name,
+                            geoid: item.geoid,
+                            type: 'external',
+                            source: 'latlong'
+                        });
+                    }
+                });
+            }
+
+            setSuggestions(combinedSuggestions);
+            setShowDropdown(combinedSuggestions.length > 0);
             setIsLoading(false);
         }, 300);
 
@@ -144,31 +152,53 @@ const SearchBar = ({ onLocationSelect }) => {
         setIsLoading(true);
         setError(null);
 
-        // Geocode the selected address to get coordinates
-        const geocodeResult = await fetchGeocode(suggestion.name);
-        
-        if (geocodeResult?.status === 'success' && geocodeResult.data) {
-            const lat = parseFloat(geocodeResult.data.latitude);
-            const lon = parseFloat(geocodeResult.data.longitude);
+        let lat, lon;
+
+        // If it's a local area result, we already have coordinates
+        if (suggestion.source === 'local' && suggestion.lat && suggestion.lon) {
+            lat = suggestion.lat;
+            lon = suggestion.lon;
+        } else {
+            // External result - need to geocode
+            const geocodeResult = await fetchGeocode(suggestion.name);
             
-            // Validate that the location is within Delhi bounds
-            if (!isWithinDelhi(lat, lon)) {
-                setError('This location is outside Delhi. Please select a location within Delhi NCT.');
+            if (geocodeResult?.status === 'success' && geocodeResult.data) {
+                lat = parseFloat(geocodeResult.data.latitude);
+                lon = parseFloat(geocodeResult.data.longitude);
+            } else {
+                setError('Could not find coordinates for this location.');
+                setIsLoading(false);
+                return;
+            }
+        }
+
+        // Quick bounding box check first
+        if (!isWithinDelhiBounds(lat, lon)) {
+            setError('This location is outside Delhi. Please select a location within Delhi NCT.');
+            setQuery('');
+            setIsLoading(false);
+            return;
+        }
+
+        // For external results, do precise geometry check against database
+        if (suggestion.source !== 'local') {
+            const isInDelhi = await checkPointInDelhi(lat, lon);
+            if (!isInDelhi) {
+                setError('This location is outside Delhi city boundaries. Please select a location within Delhi NCT.');
                 setQuery('');
                 setIsLoading(false);
                 return;
             }
-            
-            setQuery(suggestion.name);
-            onLocationSelect({
-                name: suggestion.name,
-                lat: lat,
-                lon: lon,
-                geoid: suggestion.geoid
-            });
-        } else {
-            setError('Could not find coordinates for this location.');
         }
+
+        setQuery(suggestion.name);
+        onLocationSelect({
+            name: suggestion.name,
+            lat: lat,
+            lon: lon,
+            type: suggestion.type,
+            geoid: suggestion.geoid
+        });
         
         setIsLoading(false);
     };
@@ -239,28 +269,30 @@ const SearchBar = ({ onLocationSelect }) => {
                     className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-200 overflow-hidden z-[1001] max-h-80 overflow-y-auto"
                 >
                     {suggestions.map((suggestion, index) => {
-                        const inDelhi = isLikelyDelhi(suggestion.name);
+                        const isLocal = suggestion.source === 'local';
                         return (
                             <button
-                                key={suggestion.geoid || index}
+                                key={suggestion.geoid || `${suggestion.name}-${index}`}
                                 onClick={() => handleSelect(suggestion)}
                                 onMouseEnter={() => setSelectedIndex(index)}
                                 className={`w-full px-4 py-3 flex items-start gap-3 text-left transition-colors ${
                                     index === selectedIndex 
                                         ? 'bg-blue-50' 
                                         : 'hover:bg-gray-50'
-                                } ${!inDelhi ? 'opacity-60' : ''}`}
+                                }`}
                             >
-                                <MapPin size={16} className={`mt-0.5 flex-shrink-0 ${inDelhi ? 'text-blue-500' : 'text-gray-400'}`} />
+                                {isLocal ? (
+                                    <Building2 size={16} className="mt-0.5 flex-shrink-0 text-green-600" />
+                                ) : (
+                                    <MapPin size={16} className="mt-0.5 flex-shrink-0 text-blue-500" />
+                                )}
                                 <div className="flex-1 min-w-0">
-                                    <p className={`text-sm truncate ${inDelhi ? 'text-gray-800' : 'text-gray-500'}`}>
+                                    <p className="text-sm text-gray-800 truncate">
                                         {suggestion.name}
                                     </p>
-                                    {!inDelhi && (
-                                        <p className="text-xs text-orange-500 mt-0.5">
-                                            May be outside Delhi
-                                        </p>
-                                    )}
+                                    <p className={`text-xs mt-0.5 ${isLocal ? 'text-green-600' : 'text-gray-400'}`}>
+                                        {isLocal ? '✓ Delhi Area' : 'External location'}
+                                    </p>
                                 </div>
                             </button>
                         );

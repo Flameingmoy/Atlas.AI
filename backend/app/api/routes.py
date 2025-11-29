@@ -59,11 +59,15 @@ def get_points(category: Optional[str] = None, limit: int = 500):
 @router.get("/areas", response_model=List[dict])
 def get_areas():
     """
-    Get all areas/districts from delhi_area table
+    Get all areas/districts from delhi_area table with centroids
     """
     conn = get_db_connection()
     
-    query = "SELECT id, name FROM delhi_area"
+    query = """
+        SELECT id, name, longitude, latitude 
+        FROM areaWithCentroid 
+        ORDER BY name
+    """
     results = conn.execute(query).fetchall()
     conn.close()
     
@@ -71,10 +75,92 @@ def get_areas():
     for r in results:
         areas.append({
             "id": r[0],
-            "name": r[1]
+            "name": r[1],
+            "lon": r[2],
+            "lat": r[3]
         })
         
     return areas
+
+@router.get("/areas/search")
+def search_areas(q: str, limit: int = 10):
+    """
+    Search areas by name with fuzzy matching.
+    Returns areas with centroids for map navigation.
+    """
+    conn = get_db_connection()
+    
+    # Case-insensitive search with LIKE
+    query = """
+        SELECT id, name, longitude, latitude 
+        FROM areaWithCentroid 
+        WHERE LOWER(name) LIKE LOWER(?)
+        ORDER BY 
+            CASE WHEN LOWER(name) = LOWER(?) THEN 0
+                 WHEN LOWER(name) LIKE LOWER(?) THEN 1
+                 ELSE 2 END,
+            name
+        LIMIT ?
+    """
+    search_term = f"%{q}%"
+    starts_with = f"{q}%"
+    results = conn.execute(query, [search_term, q, starts_with, limit]).fetchall()
+    conn.close()
+    
+    return [{
+        "id": r[0],
+        "name": r[1],
+        "lon": r[2],
+        "lat": r[3],
+        "type": "area"
+    } for r in results]
+
+@router.get("/delhi/bounds")
+def get_delhi_bounds():
+    """
+    Get Delhi city boundary bounding box from the database.
+    Used for validating if coordinates are within Delhi.
+    """
+    conn = get_db_connection()
+    
+    query = """
+        SELECT 
+            ST_XMin(geom) as min_lon,
+            ST_XMax(geom) as max_lon,
+            ST_YMin(geom) as min_lat,
+            ST_YMax(geom) as max_lat
+        FROM delhi_city
+        LIMIT 1
+    """
+    result = conn.execute(query).fetchone()
+    conn.close()
+    
+    if result:
+        return {
+            "min_lon": result[0],
+            "max_lon": result[1],
+            "min_lat": result[2],
+            "max_lat": result[3]
+        }
+    return None
+
+@router.get("/delhi/contains")
+def check_point_in_delhi(lat: float, lon: float):
+    """
+    Check if a point is within the Delhi city boundary polygon.
+    Uses actual geometry for precise validation.
+    """
+    conn = get_db_connection()
+    
+    query = """
+        SELECT ST_Contains(geom, ST_Point(?, ?)) as is_inside
+        FROM delhi_city
+        LIMIT 1
+    """
+    result = conn.execute(query, [lon, lat]).fetchone()
+    conn.close()
+    
+    return {"is_inside": bool(result[0]) if result else False}
 
 @router.get("/pincodes", response_model=List[dict])
 def get_pincodes():
