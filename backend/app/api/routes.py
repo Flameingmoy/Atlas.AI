@@ -3,7 +3,7 @@ from typing import List, Optional
 from app.services.analysis import AnalysisService
 from app.services.ai_agent import AIAgentService
 from app.services.latlong_client import LatLongClient
-from app.core.db import get_db_connection
+from app.core.db import get_db_cursor, execute_query
 import json
 
 agent = AIAgentService()
@@ -12,7 +12,7 @@ router = APIRouter()
 
 @router.get("/health")
 def health_check():
-    return {"status": "ok", "version": "0.1.0", "db": "duckdb"}
+    return {"status": "ok", "version": "0.1.0", "db": "postgis"}
 
 @router.get("/points", response_model=List[dict])
 def get_points(category: Optional[str] = None, limit: int = 2000):
@@ -20,41 +20,36 @@ def get_points(category: Optional[str] = None, limit: int = 2000):
     Get points of interest from delhi_points table.
     Only returns points within Delhi bounds and limited to prevent memory issues.
     """
-    conn = get_db_connection()
-    
     # Delhi bounding box (approximate)
     min_lat, max_lat = 28.4, 28.9
     min_lon, max_lon = 76.8, 77.4
     
-    query = """
-        SELECT id, name, category, ST_Y(geom) as lat, ST_X(geom) as lon 
-        FROM delhi_points
-        WHERE ST_Y(geom) BETWEEN ? AND ?
-        AND ST_X(geom) BETWEEN ? AND ?
-    """
-    params = [min_lat, max_lat, min_lon, max_lon]
-    
     if category:
-        query += " AND category = ?"
-        params.append(category)
+        query = """
+            SELECT id, name, category, ST_Y(geom) as lat, ST_X(geom) as lon 
+            FROM delhi_points
+            WHERE ST_Y(geom) BETWEEN %s AND %s
+            AND ST_X(geom) BETWEEN %s AND %s
+            AND category = %s
+            LIMIT %s
+        """
+        params = (min_lat, max_lat, min_lon, max_lon, category, limit)
+    else:
+        query = """
+            SELECT id, name, category, ST_Y(geom) as lat, ST_X(geom) as lon 
+            FROM delhi_points
+            WHERE ST_Y(geom) BETWEEN %s AND %s
+            AND ST_X(geom) BETWEEN %s AND %s
+            LIMIT %s
+        """
+        params = (min_lat, max_lat, min_lon, max_lon, limit)
     
-    query += f" LIMIT {limit}"
-        
-    results = conn.execute(query, params).fetchall()
-    conn.close()
+    results = execute_query(query, params)
     
-    # Format response
-    points = []
-    for r in results:
-        points.append({
-            "id": r[0],
-            "name": r[1],
-            "category": r[2],
-            "lat": r[3],
-            "lon": r[4]
-        })
-        
-    return points
+    return [
+        {"id": r[0], "name": r[1], "category": r[2], "lat": r[3], "lon": r[4]}
+        for r in results
+    ]
 
 
 @router.get("/points/viewport", response_model=List[dict])
@@ -69,13 +64,11 @@ def get_points_viewport(
     """
     Return POIs within the given viewport bounding box.
     - Expands the bbox by `buffer_frac` (fraction of bbox size) to preload nearby points for smooth panning.
-    - Ranks POIs by an importance score derived from `areaScores` when available.
-    - Falls back to returning points from `pointsArea` (which has area mapping) if present.
+    - Ranks POIs by an importance score derived from `area_scores` when available.
+    - Falls back to returning points from `points_area` (which has area mapping) if present.
 
     Params: min_lat, min_lon, max_lat, max_lon, limit, buffer_frac
     """
-    conn = get_db_connection()
-
     # expand bbox slightly to preload nearby POIs
     lat_span = max_lat - min_lat
     lon_span = max_lon - min_lon
@@ -87,76 +80,56 @@ def get_points_viewport(
     q_min_lon = min_lon - pad_lon
     q_max_lon = max_lon + pad_lon
 
-    # Use pointsArea (points with area mapping) joined to areaScores to compute importance
+    # Use points_area joined to area_scores to compute importance
     query = """
         SELECT p.id, p.name, p.category, ST_Y(p.geom) as lat, ST_X(p.geom) as lon,
-               COALESCE(a.Score_Footfall,0) as footfall,
-               COALESCE(a.Score_POI_Synergy,0) as poi_synergy,
-               COALESCE(a.Score_Transit,0) as transit,
-               (COALESCE(a.Score_Footfall,0)*0.5 + COALESCE(a.Score_POI_Synergy,0)*0.3 + COALESCE(a.Score_Transit,0)*0.2) as importance
-        FROM pointsArea p
-        LEFT JOIN areaScores a ON p.area = a.name
-        WHERE ST_Y(p.geom) BETWEEN ? AND ?
-          AND ST_X(p.geom) BETWEEN ? AND ?
+               COALESCE(a.score_footfall, 0) as footfall,
+               COALESCE(a.score_poi_synergy, 0) as poi_synergy,
+               COALESCE(a.score_transit, 0) as transit,
+               (COALESCE(a.score_footfall, 0)*0.5 + COALESCE(a.score_poi_synergy, 0)*0.3 + COALESCE(a.score_transit, 0)*0.2) as importance
+        FROM points_area p
+        LEFT JOIN area_scores a ON p.area = a.name
+        WHERE ST_Y(p.geom) BETWEEN %s AND %s
+          AND ST_X(p.geom) BETWEEN %s AND %s
         ORDER BY importance DESC
-        LIMIT ?
+        LIMIT %s
     """
-
-    params = [q_min_lat, q_max_lat, q_min_lon, q_max_lon, limit]
+    params = (q_min_lat, q_max_lat, q_min_lon, q_max_lon, limit)
 
     try:
-        results = conn.execute(query, params).fetchall()
+        results = execute_query(query, params)
     except Exception:
-        # Fallback: if pointsArea/areaScores not available, query delhi_points directly
+        # Fallback: if points_area/area_scores not available, query delhi_points directly
         fallback_q = """
             SELECT id, name, category, ST_Y(geom) as lat, ST_X(geom) as lon
             FROM delhi_points
-            WHERE ST_Y(geom) BETWEEN ? AND ?
-              AND ST_X(geom) BETWEEN ? AND ?
-            LIMIT ?
+            WHERE ST_Y(geom) BETWEEN %s AND %s
+              AND ST_X(geom) BETWEEN %s AND %s
+            LIMIT %s
         """
-        results = conn.execute(fallback_q, [q_min_lat, q_max_lat, q_min_lon, q_max_lon, limit]).fetchall()
-    finally:
-        conn.close()
+        results = execute_query(fallback_q, (q_min_lat, q_max_lat, q_min_lon, q_max_lon, limit))
 
-    points = []
-    for r in results:
-        # If importance joined, result has more columns; take first five always
-        points.append({
-            "id": r[0],
-            "name": r[1],
-            "category": r[2],
-            "lat": r[3],
-            "lon": r[4]
-        })
-
-    return points
+    return [
+        {"id": r[0], "name": r[1], "category": r[2], "lat": r[3], "lon": r[4]}
+        for r in results
+    ]
 
 @router.get("/areas", response_model=List[dict])
 def get_areas():
     """
     Get all areas/districts from delhi_area table with centroids
     """
-    conn = get_db_connection()
-    
     query = """
         SELECT id, name, longitude, latitude 
-        FROM areaWithCentroid 
+        FROM area_with_centroid 
         ORDER BY name
     """
-    results = conn.execute(query).fetchall()
-    conn.close()
+    results = execute_query(query)
     
-    areas = []
-    for r in results:
-        areas.append({
-            "id": r[0],
-            "name": r[1],
-            "lon": r[2],
-            "lat": r[3]
-        })
-        
-    return areas
+    return [
+        {"id": r[0], "name": r[1], "lon": r[2], "lat": r[3]}
+        for r in results
+    ]
 
 @router.get("/areas/search")
 def search_areas(q: str, limit: int = 10):
@@ -164,24 +137,21 @@ def search_areas(q: str, limit: int = 10):
     Search areas by name with fuzzy matching.
     Returns areas with centroids for map navigation.
     """
-    conn = get_db_connection()
-    
-    # Case-insensitive search with LIKE
+    # PostgreSQL ILIKE for case-insensitive search
     query = """
         SELECT id, name, longitude, latitude 
-        FROM areaWithCentroid 
-        WHERE LOWER(name) LIKE LOWER(?)
+        FROM area_with_centroid 
+        WHERE name ILIKE %s
         ORDER BY 
-            CASE WHEN LOWER(name) = LOWER(?) THEN 0
-                 WHEN LOWER(name) LIKE LOWER(?) THEN 1
+            CASE WHEN LOWER(name) = LOWER(%s) THEN 0
+                 WHEN name ILIKE %s THEN 1
                  ELSE 2 END,
             name
-        LIMIT ?
+        LIMIT %s
     """
     search_term = f"%{q}%"
     starts_with = f"{q}%"
-    results = conn.execute(query, [search_term, q, starts_with, limit]).fetchall()
-    conn.close()
+    results = execute_query(query, (search_term, q, starts_with, limit))
     
     return [{
         "id": r[0],
@@ -197,8 +167,6 @@ def get_delhi_bounds():
     Get Delhi city boundary bounding box from the database.
     Used for validating if coordinates are within Delhi.
     """
-    conn = get_db_connection()
-    
     query = """
         SELECT 
             ST_XMin(geom) as min_lon,
@@ -208,8 +176,7 @@ def get_delhi_bounds():
         FROM delhi_city
         LIMIT 1
     """
-    result = conn.execute(query).fetchone()
-    conn.close()
+    result = execute_query(query, fetch="one")
     
     if result:
         return {
@@ -226,15 +193,12 @@ def check_point_in_delhi(lat: float, lon: float):
     Check if a point is within the Delhi city boundary polygon.
     Uses actual geometry for precise validation.
     """
-    conn = get_db_connection()
-    
     query = """
-        SELECT ST_Contains(geom, ST_Point(?, ?)) as is_inside
+        SELECT ST_Contains(geom, ST_SetSRID(ST_Point(%s, %s), 4326)) as is_inside
         FROM delhi_city
         LIMIT 1
     """
-    result = conn.execute(query, [lon, lat]).fetchone()
-    conn.close()
+    result = execute_query(query, (lon, lat), fetch="one")
     
     return {"is_inside": bool(result[0]) if result else False}
 
@@ -243,20 +207,10 @@ def get_pincodes():
     """
     Get all pincodes from delhi_pincode table
     """
-    conn = get_db_connection()
-    
     query = "SELECT id, name FROM delhi_pincode"
-    results = conn.execute(query).fetchall()
-    conn.close()
+    results = execute_query(query)
     
-    pincodes = []
-    for r in results:
-        pincodes.append({
-            "id": r[0],
-            "pincode": r[1]
-        })
-        
-    return pincodes
+    return [{"id": r[0], "pincode": r[1]} for r in results]
 
 @router.post("/analyze/score")
 def calculate_score(
@@ -289,11 +243,10 @@ def chat(message: dict):
 
 @router.get("/delhi_boundary")
 def get_delhi_boundary():
-    conn = get_db_connection()
-    # Assuming delhi_city has the boundary
+    """Get Delhi city boundary as GeoJSON."""
     try:
         query = "SELECT ST_AsGeoJSON(geom) as geometry, name FROM delhi_city LIMIT 1"
-        results = conn.execute(query).fetchall()
+        results = execute_query(query)
         
         features = []
         for r in results:
@@ -310,8 +263,6 @@ def get_delhi_boundary():
     except Exception as e:
         print(f"Error fetching boundary: {e}")
         return {"type": "FeatureCollection", "features": []}
-    finally:
-        conn.close()
 
 @router.get("/external/poi")
 def get_external_poi(lat: float, lon: float, category: Optional[str] = None):

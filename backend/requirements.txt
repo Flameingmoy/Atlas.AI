@@ -13,3 +13,8 @@ python-dotenv
 groq
 pandas
 sqlparse
+# PostGIS/PostgreSQL dependencies
+psycopg2-binary
+asyncpg
+sqlalchemy[asyncio]
+geoalchemy2

@@ -1,6 +1,22 @@
-version: '3.8'
-
 services:
+  db:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: atlas-postgis
+    restart: unless-stopped
+    ports:
+      - "5433:5432"  # Map to 5433 externally to avoid conflict with local postgres
+    environment:
+      POSTGRES_USER: atlas
+      POSTGRES_PASSWORD: atlas_secret
+      POSTGRES_DB: atlas_db
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atlas -d atlas_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   backend:
     build: ./backend
     ports:
@@ -9,10 +25,21 @@ services:
       - ./data:/app/data
     environment:
       - LATLONG_TOKEN=${LATLONG_TOKEN}
-      - DATABASE_PATH=/app/data/delhi.db
       - GROQ_API_KEY=${GROQ_API_KEY}
+      # PostGIS connection
+      - DATABASE_URL=postgresql://atlas:atlas_secret@db:5432/atlas_db
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=atlas
+      - DB_PASSWORD=atlas_secret
+      - DB_NAME=atlas_db
+      # Legacy DuckDB path (for migration)
+      - DUCKDB_PATH=/app/data/delhi.db
     env_file:
       - .env
+    depends_on:
+      db:
+        condition: service_healthy
 
   frontend:
     build: ./frontend
@@ -20,3 +47,6 @@ services:
       - "8080:80"
     depends_on:
       - backend
+
+volumes:
+  postgis_data:
