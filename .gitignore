@@ -16,3 +16,7 @@ dist/
 .idea/
 .vscode/
 coverage/
+
+# Data
+*.json
+*.geojson
