@@ -26,15 +26,15 @@ const getIcon = (type) => {
         case 'area':
             return <Building2 size={16} className="text-green-600" />;
         case 'category':
-            return <Tag size={16} className="text-purple-600" />;
+            return <Tag size={16} className="text-green-600" />;
         case 'super_category':
-            return <Layers size={16} className="text-orange-500" />;
+            return <Layers size={16} className="text-green-600" />;
         case 'poi':
-            return <MapPin size={16} className="text-blue-500" />;
+            return <MapPin size={16} className="text-green-600" />;
         case 'external':
-            return <MapPin size={16} className="text-blue-500" />;
+            return <MapPin size={16} className="text-gray-400" />;
         default:
-            return <MapPin size={16} className="text-gray-500" />;
+            return <MapPin size={16} className="text-gray-400" />;
     }
 };
 
@@ -48,18 +48,18 @@ const getTypeInfo = (type, count, category) => {
             };
         case 'category':
             return {
-                label: `Category · ${count?.toLocaleString()} places`,
-                className: 'text-purple-600'
+                label: `✓ Category · ${count?.toLocaleString()} places`,
+                className: 'text-green-600'
             };
         case 'super_category':
             return {
-                label: `${count?.toLocaleString()} places`,
-                className: 'text-orange-500'
+                label: `✓ Super Category · ${count?.toLocaleString()} places`,
+                className: 'text-green-600'
             };
         case 'poi':
             return {
-                label: category || 'Point of Interest',
-                className: 'text-gray-400'
+                label: `✓ ${category || 'Delhi POI'}`,
+                className: 'text-green-600'
             };
         case 'external':
             return {
