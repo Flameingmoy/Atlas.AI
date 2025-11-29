@@ -4,10 +4,109 @@ import axios from 'axios';
 // In production, nginx routes /api to the backend
 const API_URL = '/api/v1';
 
+// ============================================
+// Caching Layer
+// ============================================
+
+// Simple LRU-like cache with TTL
+class APICache {
+    constructor(maxSize = 500, defaultTTL = 5 * 60 * 1000) { // 5 min default TTL
+        this.cache = new Map();
+        this.maxSize = maxSize;
+        this.defaultTTL = defaultTTL;
+    }
+
+    // Generate cache key from URL and params
+    makeKey(url, params = {}) {
+        const sortedParams = Object.keys(params).sort().map(k => `${k}=${params[k]}`).join('&');
+        return `${url}?${sortedParams}`;
+    }
+
+    get(key) {
+        const entry = this.cache.get(key);
+        if (!entry) return null;
+        
+        // Check TTL
+        if (Date.now() > entry.expiry) {
+            this.cache.delete(key);
+            return null;
+        }
+        
+        // Move to end (most recently used)
+        this.cache.delete(key);
+        this.cache.set(key, entry);
+        return entry.data;
+    }
+
+    set(key, data, ttl = this.defaultTTL) {
+        // Evict oldest if at capacity
+        if (this.cache.size >= this.maxSize) {
+            const oldestKey = this.cache.keys().next().value;
+            this.cache.delete(oldestKey);
+        }
+        
+        this.cache.set(key, {
+            data,
+            expiry: Date.now() + ttl
+        });
+    }
+
+    // For viewport queries, use spatial bucketing
+    makeViewportKey(minLat, minLon, maxLat, maxLon, limit) {
+        // Round to 3 decimal places (~100m precision) to increase cache hits
+        const round = (n) => Math.round(n * 1000) / 1000;
+        return `viewport:${round(minLat)},${round(minLon)},${round(maxLat)},${round(maxLon)}:${limit}`;
+    }
+
+    clear() {
+        this.cache.clear();
+    }
+
+    get size() {
+        return this.cache.size;
+    }
+}
+
+// Global cache instances
+const cache = new APICache(500, 5 * 60 * 1000);      // 5 min for general queries
+const viewportCache = new APICache(100, 30 * 1000); // 30 sec for viewport (changes often)
+const staticCache = new APICache(50, 60 * 60 * 1000); // 1 hour for static data (categories, areas)
+
+// ============================================
+// Cached API wrapper
+// ============================================
+
+const cachedGet = async (url, params = {}, cacheInstance = cache, ttl = null) => {
+    const key = cacheInstance.makeKey(url, params);
+    
+    // Check cache first
+    const cached = cacheInstance.get(key);
+    if (cached !== null) {
+        console.log(`[Cache HIT] ${key}`);
+        return cached;
+    }
+    
+    console.log(`[Cache MISS] ${key}`);
+    const response = await axios.get(url, { params });
+    const data = response.data;
+    
+    // Store in cache
+    if (ttl) {
+        cacheInstance.set(key, data, ttl);
+    } else {
+        cacheInstance.set(key, data);
+    }
+    
+    return data;
+};
+
+// ============================================
+// API Functions (with caching)
+// ============================================
+
 export const fetchPoints = async (category) => {
     try {
-        const response = await axios.get(`${API_URL}/points`, { params: { category } });
-        return response.data;
+        return await cachedGet(`${API_URL}/points`, { category });
     } catch (error) {
         console.error("Error fetching points:", error);
         return [];
@@ -19,19 +118,25 @@ export const fetchPOIs = fetchPoints;
 
 /**
  * Fetch POIs within a viewport bounding box, ranked by importance.
- * The backend expands the bbox slightly for smoother panning.
- * @param {number} minLat - South boundary
- * @param {number} minLon - West boundary
- * @param {number} maxLat - North boundary
- * @param {number} maxLon - East boundary
- * @param {number} limit - Max POIs to return (default 200)
- * @param {number} bufferFrac - Fraction to expand bbox (default 0.05)
+ * Uses spatial bucketing for cache efficiency.
  */
 export const fetchPointsViewport = async (minLat, minLon, maxLat, maxLon, limit = 200, bufferFrac = 0.05) => {
     try {
+        const key = viewportCache.makeViewportKey(minLat, minLon, maxLat, maxLon, limit);
+        
+        // Check viewport cache
+        const cached = viewportCache.get(key);
+        if (cached !== null) {
+            console.log(`[Viewport Cache HIT] ${limit} POIs`);
+            return cached;
+        }
+        
+        console.log(`[Viewport Cache MISS] Fetching ${limit} POIs`);
         const response = await axios.get(`${API_URL}/points/viewport`, {
             params: { min_lat: minLat, min_lon: minLon, max_lat: maxLat, max_lon: maxLon, limit, buffer_frac: bufferFrac }
         });
+        
+        viewportCache.set(key, response.data);
         return response.data;
     } catch (error) {
         console.error("Error fetching viewport points:", error);
@@ -61,8 +166,7 @@ export const sendChatMessage = async (message) => {
 
 export const fetchBoundary = async () => {
     try {
-        const response = await axios.get(`${API_URL}/delhi_boundary`);
-        return response.data;
+        return await cachedGet(`${API_URL}/delhi_boundary`, {}, staticCache);
     } catch (error) {
         console.error("Error fetching boundary:", error);
         return null;
@@ -75,13 +179,10 @@ export const fetchBoundary = async () => {
 
 /**
  * Search areas within Delhi by name
- * @param {string} query - Search term
- * @param {number} limit - Maximum results (default 10)
  */
 export const searchAreas = async (query, limit = 10) => {
     try {
-        const response = await axios.get(`${API_URL}/areas/search`, { params: { q: query, limit } });
-        return response.data;
+        return await cachedGet(`${API_URL}/areas/search`, { q: query, limit });
     } catch (error) {
         console.error("Error searching areas:", error);
         return [];
@@ -90,13 +191,10 @@ export const searchAreas = async (query, limit = 10) => {
 
 /**
  * Unified search across areas, POIs, categories, and super categories
- * @param {string} query - Search term
- * @param {number} limit - Maximum results (default 15)
  */
 export const unifiedSearch = async (query, limit = 15) => {
     try {
-        const response = await axios.get(`${API_URL}/search/unified`, { params: { q: query, limit } });
-        return response.data;
+        return await cachedGet(`${API_URL}/search/unified`, { q: query, limit });
     } catch (error) {
         console.error("Error in unified search:", error);
         return [];
@@ -105,13 +203,10 @@ export const unifiedSearch = async (query, limit = 15) => {
 
 /**
  * Search POIs by name
- * @param {string} query - Search term
- * @param {number} limit - Maximum results (default 10)
  */
 export const searchPOIs = async (query, limit = 10) => {
     try {
-        const response = await axios.get(`${API_URL}/pois/search`, { params: { q: query, limit } });
-        return response.data;
+        return await cachedGet(`${API_URL}/pois/search`, { q: query, limit });
     } catch (error) {
         console.error("Error searching POIs:", error);
         return [];
@@ -120,13 +215,10 @@ export const searchPOIs = async (query, limit = 10) => {
 
 /**
  * Search categories
- * @param {string} query - Search term
- * @param {number} limit - Maximum results (default 10)
  */
 export const searchCategories = async (query, limit = 10) => {
     try {
-        const response = await axios.get(`${API_URL}/categories/search`, { params: { q: query, limit } });
-        return response.data;
+        return await cachedGet(`${API_URL}/categories/search`, { q: query, limit });
     } catch (error) {
         console.error("Error searching categories:", error);
         return [];
@@ -134,12 +226,11 @@ export const searchCategories = async (query, limit = 10) => {
 };
 
 /**
- * Get all categories
+ * Get all categories (static, long cache)
  */
 export const fetchCategories = async () => {
     try {
-        const response = await axios.get(`${API_URL}/categories`);
-        return response.data;
+        return await cachedGet(`${API_URL}/categories`, {}, staticCache);
     } catch (error) {
         console.error("Error fetching categories:", error);
         return [];
@@ -147,12 +238,11 @@ export const fetchCategories = async () => {
 };
 
 /**
- * Get all super categories
+ * Get all super categories (static, long cache)
  */
 export const fetchSuperCategories = async () => {
     try {
-        const response = await axios.get(`${API_URL}/super-categories`);
-        return response.data;
+        return await cachedGet(`${API_URL}/super-categories`, {}, staticCache);
     } catch (error) {
         console.error("Error fetching super categories:", error);
         return [];
@@ -160,14 +250,11 @@ export const fetchSuperCategories = async () => {
 };
 
 /**
- * Get POIs by category
- * @param {string} category - Category name
- * @param {number} limit - Maximum results (default 500)
+ * Get POIs by category (cache for 2 min since these are large)
  */
 export const fetchPOIsByCategory = async (category, limit = 500) => {
     try {
-        const response = await axios.get(`${API_URL}/pois/by-category`, { params: { category, limit } });
-        return response.data;
+        return await cachedGet(`${API_URL}/pois/by-category`, { category, limit }, cache, 2 * 60 * 1000);
     } catch (error) {
         console.error("Error fetching POIs by category:", error);
         return [];
@@ -175,14 +262,11 @@ export const fetchPOIsByCategory = async (category, limit = 500) => {
 };
 
 /**
- * Get POIs by super category
- * @param {string} superCategory - Super category name
- * @param {number} limit - Maximum results (default 500)
+ * Get POIs by super category (cache for 2 min since these are large)
  */
 export const fetchPOIsBySuperCategory = async (superCategory, limit = 500) => {
     try {
-        const response = await axios.get(`${API_URL}/pois/by-super-category`, { params: { super_category: superCategory, limit } });
-        return response.data;
+        return await cachedGet(`${API_URL}/pois/by-super-category`, { super_category: superCategory, limit }, cache, 2 * 60 * 1000);
     } catch (error) {
         console.error("Error fetching POIs by super category:", error);
         return [];
@@ -190,12 +274,11 @@ export const fetchPOIsBySuperCategory = async (superCategory, limit = 500) => {
 };
 
 /**
- * Get all Delhi areas with centroids
+ * Get all Delhi areas with centroids (static, long cache)
  */
 export const fetchAreas = async () => {
     try {
-        const response = await axios.get(`${API_URL}/areas`);
-        return response.data;
+        return await cachedGet(`${API_URL}/areas`, {}, staticCache);
     } catch (error) {
         console.error("Error fetching areas:", error);
         return [];
@@ -203,12 +286,11 @@ export const fetchAreas = async () => {
 };
 
 /**
- * Get Delhi city bounding box from database
+ * Get Delhi city bounding box (static, long cache)
  */
 export const fetchDelhiBounds = async () => {
     try {
-        const response = await axios.get(`${API_URL}/delhi/bounds`);
-        return response.data;
+        return await cachedGet(`${API_URL}/delhi/bounds`, {}, staticCache);
     } catch (error) {
         console.error("Error fetching Delhi bounds:", error);
         return null;
@@ -216,14 +298,12 @@ export const fetchDelhiBounds = async () => {
 };
 
 /**
- * Check if a point is within Delhi city boundary (precise geometry check)
- * @param {number} lat - Latitude
- * @param {number} lon - Longitude
+ * Check if a point is within Delhi city boundary (short cache)
  */
 export const checkPointInDelhi = async (lat, lon) => {
     try {
-        const response = await axios.get(`${API_URL}/delhi/contains`, { params: { lat, lon } });
-        return response.data.is_inside;
+        const data = await cachedGet(`${API_URL}/delhi/contains`, { lat, lon }, cache, 60 * 1000);
+        return data.is_inside;
     } catch (error) {
         console.error("Error checking point in Delhi:", error);
         return false;
@@ -231,23 +311,18 @@ export const checkPointInDelhi = async (lat, lon) => {
 };
 
 // ============================================
-// LatLong External API Functions
+// LatLong External API Functions (with caching)
 // ============================================
 
 /**
- * Get autocomplete suggestions for a search query
- * @param {string} query - Search text
- * @param {number} lat - Optional latitude for location-biased results
- * @param {number} lon - Optional longitude for location-biased results
- * @param {number} limit - Maximum results (default 10)
+ * Get autocomplete suggestions (short cache since user is typing)
  */
 export const fetchAutocomplete = async (query, lat = null, lon = null, limit = 10) => {
     try {
         const params = { query, limit };
         if (lat !== null) params.lat = lat;
         if (lon !== null) params.lon = lon;
-        const response = await axios.get(`${API_URL}/external/autocomplete`, { params });
-        return response.data;
+        return await cachedGet(`${API_URL}/external/autocomplete`, params, cache, 60 * 1000);
     } catch (error) {
         console.error("Error fetching autocomplete:", error);
         return { status: "error", data: [] };
@@ -255,13 +330,11 @@ export const fetchAutocomplete = async (query, lat = null, lon = null, limit = 1
 };
 
 /**
- * Convert address to coordinates (geocoding)
- * @param {string} address - Full address string
+ * Convert address to coordinates (cache for 10 min)
  */
 export const fetchGeocode = async (address) => {
     try {
-        const response = await axios.get(`${API_URL}/external/geocode`, { params: { address } });
-        return response.data;
+        return await cachedGet(`${API_URL}/external/geocode`, { address }, cache, 10 * 60 * 1000);
     } catch (error) {
         console.error("Error fetching geocode:", error);
         return null;
@@ -269,14 +342,14 @@ export const fetchGeocode = async (address) => {
 };
 
 /**
- * Convert coordinates to address (reverse geocoding)
- * @param {number} lat - Latitude
- * @param {number} lon - Longitude
+ * Convert coordinates to address (cache for 10 min)
  */
 export const fetchReverseGeocode = async (lat, lon) => {
     try {
-        const response = await axios.get(`${API_URL}/external/reverse`, { params: { lat, lon } });
-        return response.data;
+        // Round coordinates to reduce cache keys (4 decimal = ~11m precision)
+        const roundedLat = Math.round(lat * 10000) / 10000;
+        const roundedLon = Math.round(lon * 10000) / 10000;
+        return await cachedGet(`${API_URL}/external/reverse`, { lat: roundedLat, lon: roundedLon }, cache, 10 * 60 * 1000);
     } catch (error) {
         console.error("Error fetching reverse geocode:", error);
         return null;
@@ -285,14 +358,10 @@ export const fetchReverseGeocode = async (lat, lon) => {
 
 /**
  * Validate if an address matches given coordinates
- * @param {string} address - Address to validate
- * @param {number} lat - Expected latitude
- * @param {number} lon - Expected longitude
  */
 export const fetchValidateAddress = async (address, lat, lon) => {
     try {
-        const response = await axios.get(`${API_URL}/external/validate`, { params: { address, lat, lon } });
-        return response.data;
+        return await cachedGet(`${API_URL}/external/validate`, { address, lat, lon }, cache, 10 * 60 * 1000);
     } catch (error) {
         console.error("Error validating address:", error);
         return null;
@@ -300,14 +369,14 @@ export const fetchValidateAddress = async (address, lat, lon) => {
 };
 
 /**
- * Get nearby landmarks
- * @param {number} lat - Latitude
- * @param {number} lon - Longitude
+ * Get nearby landmarks (cache for 5 min)
  */
 export const fetchLandmarks = async (lat, lon) => {
     try {
-        const response = await axios.get(`${API_URL}/external/landmarks`, { params: { lat, lon } });
-        return response.data;
+        // Round coordinates for better cache hits
+        const roundedLat = Math.round(lat * 10000) / 10000;
+        const roundedLon = Math.round(lon * 10000) / 10000;
+        return await cachedGet(`${API_URL}/external/landmarks`, { lat: roundedLat, lon: roundedLon }, cache, 5 * 60 * 1000);
     } catch (error) {
         console.error("Error fetching landmarks:", error);
         return null;
@@ -316,16 +385,12 @@ export const fetchLandmarks = async (lat, lon) => {
 
 /**
  * Get points of interest from external API
- * @param {number} lat - Latitude
- * @param {number} lon - Longitude
- * @param {string} category - Optional category filter
  */
 export const fetchExternalPOI = async (lat, lon, category = null) => {
     try {
-        const params = { lat, lon };
+        const params = { lat: Math.round(lat * 10000) / 10000, lon: Math.round(lon * 10000) / 10000 };
         if (category) params.category = category;
-        const response = await axios.get(`${API_URL}/external/poi`, { params });
-        return response.data;
+        return await cachedGet(`${API_URL}/external/poi`, params, cache, 5 * 60 * 1000);
     } catch (error) {
         console.error("Error fetching external POI:", error);
         return null;
@@ -333,17 +398,30 @@ export const fetchExternalPOI = async (lat, lon, category = null) => {
 };
 
 /**
- * Get isochrone (reachable area polygon)
- * @param {number} lat - Center latitude
- * @param {number} lon - Center longitude
- * @param {number} distance - Distance in kilometers (default 1.0)
+ * Get isochrone (cache for 5 min)
  */
 export const fetchIsochrone = async (lat, lon, distance = 1.0) => {
     try {
-        const response = await axios.get(`${API_URL}/external/isochrone`, { params: { lat, lon, distance } });
-        return response.data;
+        // Round coordinates for cache
+        const roundedLat = Math.round(lat * 10000) / 10000;
+        const roundedLon = Math.round(lon * 10000) / 10000;
+        return await cachedGet(`${API_URL}/external/isochrone`, { lat: roundedLat, lon: roundedLon, distance }, cache, 5 * 60 * 1000);
     } catch (error) {
         console.error("Error fetching isochrone:", error);
         return null;
     }
+};
+
+// Export cache for debugging/monitoring
+export const getCacheStats = () => ({
+    general: { size: cache.size, maxSize: cache.maxSize },
+    viewport: { size: viewportCache.size, maxSize: viewportCache.maxSize },
+    static: { size: staticCache.size, maxSize: staticCache.maxSize }
+});
+
+export const clearAllCaches = () => {
+    cache.clear();
+    viewportCache.clear();
+    staticCache.clear();
+    console.log('[Cache] All caches cleared');
 };

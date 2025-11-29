@@ -4,15 +4,57 @@ from app.services.analysis import AnalysisService
 from app.services.ai_agent import AIAgentService
 from app.services.latlong_client import LatLongClient
 from app.core.db import get_db_cursor, execute_query
+from cachetools import TTLCache
+from functools import wraps
+import hashlib
 import json
 
 agent = AIAgentService()
 latlong_client = LatLongClient()
 router = APIRouter()
 
+# ============================================
+# Backend Caching Layer
+# ============================================
+
+# Cache instances with different TTLs
+viewport_cache = TTLCache(maxsize=200, ttl=30)        # 30 sec for viewport queries
+search_cache = TTLCache(maxsize=500, ttl=300)         # 5 min for searches
+static_cache = TTLCache(maxsize=100, ttl=3600)        # 1 hour for static data
+external_cache = TTLCache(maxsize=300, ttl=600)       # 10 min for external API calls
+
+def make_cache_key(*args, **kwargs):
+    """Generate a hash key from function arguments"""
+    key_data = json.dumps({"args": args, "kwargs": kwargs}, sort_keys=True, default=str)
+    return hashlib.md5(key_data.encode()).hexdigest()
+
+def cached(cache_instance):
+    """Decorator for caching function results"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            key = make_cache_key(func.__name__, *args, **kwargs)
+            if key in cache_instance:
+                return cache_instance[key]
+            result = func(*args, **kwargs)
+            cache_instance[key] = result
+            return result
+        return wrapper
+    return decorator
+
 @router.get("/health")
 def health_check():
     return {"status": "ok", "version": "0.1.0", "db": "postgis"}
+
+@router.get("/cache/stats")
+def cache_stats():
+    """Get cache statistics for monitoring"""
+    return {
+        "viewport": {"size": len(viewport_cache), "maxsize": viewport_cache.maxsize},
+        "search": {"size": len(search_cache), "maxsize": search_cache.maxsize},
+        "static": {"size": len(static_cache), "maxsize": static_cache.maxsize},
+        "external": {"size": len(external_cache), "maxsize": external_cache.maxsize}
+    }
 
 @router.get("/points", response_model=List[dict])
 def get_points(category: Optional[str] = None, limit: int = 2000):
@@ -20,6 +62,10 @@ def get_points(category: Optional[str] = None, limit: int = 2000):
     Get points of interest from delhi_points table.
     Only returns points within Delhi bounds and limited to prevent memory issues.
     """
+    return _get_points_cached(category, limit)
+
+@cached(search_cache)
+def _get_points_cached(category: Optional[str], limit: int):
     # Delhi bounding box (approximate)
     min_lat, max_lat = 28.4, 28.9
     min_lon, max_lon = 76.8, 77.4
@@ -62,13 +108,18 @@ def get_points_viewport(
     buffer_frac: float = 0.05
 ):
     """
-    Return POIs within the given viewport bounding box.
-    - Expands the bbox by `buffer_frac` (fraction of bbox size) to preload nearby points for smooth panning.
-    - Ranks POIs by an importance score derived from `area_scores` when available.
-    - Falls back to returning points from `points_area` (which has area mapping) if present.
-
-    Params: min_lat, min_lon, max_lat, max_lon, limit, buffer_frac
+    Return POIs within the given viewport bounding box (cached).
     """
+    # Round coordinates for better cache hit rate (~100m precision)
+    r_min_lat = round(min_lat, 3)
+    r_min_lon = round(min_lon, 3)
+    r_max_lat = round(max_lat, 3)
+    r_max_lon = round(max_lon, 3)
+    
+    return _get_viewport_cached(r_min_lat, r_min_lon, r_max_lat, r_max_lon, limit, buffer_frac)
+
+@cached(viewport_cache)
+def _get_viewport_cached(min_lat, min_lon, max_lat, max_lon, limit, buffer_frac):
     # expand bbox slightly to preload nearby POIs
     lat_span = max_lat - min_lat
     lon_span = max_lon - min_lon
@@ -116,9 +167,11 @@ def get_points_viewport(
 
 @router.get("/areas", response_model=List[dict])
 def get_areas():
-    """
-    Get all areas/districts from delhi_area table with centroids
-    """
+    """Get all areas/districts (cached for 1 hour)"""
+    return _get_areas_cached()
+
+@cached(static_cache)
+def _get_areas_cached():
     query = """
         SELECT id, name, longitude, latitude 
         FROM area_with_centroid 
@@ -133,11 +186,11 @@ def get_areas():
 
 @router.get("/areas/search")
 def search_areas(q: str, limit: int = 10):
-    """
-    Search areas by name with fuzzy matching.
-    Returns areas with centroids for map navigation.
-    """
-    # PostgreSQL ILIKE for case-insensitive search
+    """Search areas by name (cached)"""
+    return _search_areas_cached(q.lower(), limit)
+
+@cached(search_cache)
+def _search_areas_cached(q: str, limit: int):
     query = """
         SELECT id, name, longitude, latitude 
         FROM area_with_centroid 
@@ -164,10 +217,11 @@ def search_areas(q: str, limit: int = 10):
 
 @router.get("/pois/search")
 def search_pois(q: str, limit: int = 10):
-    """
-    Search POIs by name with fuzzy matching.
-    Returns POIs with coordinates for map navigation.
-    """
+    """Search POIs by name (cached)"""
+    return _search_pois_cached(q.lower(), limit)
+
+@cached(search_cache)
+def _search_pois_cached(q: str, limit: int):
     query = """
         SELECT id, name, category, ST_Y(geom) as lat, ST_X(geom) as lon
         FROM delhi_points
@@ -195,9 +249,11 @@ def search_pois(q: str, limit: int = 10):
 
 @router.get("/categories")
 def get_categories():
-    """
-    Get all unique POI categories.
-    """
+    """Get all unique POI categories (cached 1 hour)"""
+    return _get_categories_cached()
+
+@cached(static_cache)
+def _get_categories_cached():
     query = """
         SELECT DISTINCT category 
         FROM delhi_points 
@@ -210,10 +266,11 @@ def get_categories():
 
 @router.get("/categories/search")
 def search_categories(q: str, limit: int = 10):
-    """
-    Search POI categories with fuzzy matching.
-    Returns matching categories with count of POIs.
-    """
+    """Search POI categories (cached)"""
+    return _search_categories_cached(q.lower(), limit)
+
+@cached(search_cache)
+def _search_categories_cached(q: str, limit: int):
     query = """
         SELECT category, COUNT(*) as count
         FROM delhi_points
@@ -239,9 +296,11 @@ def search_categories(q: str, limit: int = 10):
 
 @router.get("/super-categories")
 def get_super_categories():
-    """
-    Get all unique super categories from points_super.
-    """
+    """Get all unique super categories (cached 1 hour)"""
+    return _get_super_categories_cached()
+
+@cached(static_cache)
+def _get_super_categories_cached():
     query = """
         SELECT DISTINCT super_category 
         FROM points_super 
@@ -254,10 +313,11 @@ def get_super_categories():
 
 @router.get("/super-categories/search")
 def search_super_categories(q: str, limit: int = 10):
-    """
-    Search super categories with fuzzy matching.
-    Returns matching super categories with count of POIs.
-    """
+    """Search super categories (cached)"""
+    return _search_super_categories_cached(q.lower(), limit)
+
+@cached(search_cache)
+def _search_super_categories_cached(q: str, limit: int):
     query = """
         SELECT super_category, COUNT(*) as count
         FROM points_super
@@ -283,9 +343,11 @@ def search_super_categories(q: str, limit: int = 10):
 
 @router.get("/pois/by-category")
 def get_pois_by_category(category: str, limit: int = 500):
-    """
-    Get POIs filtered by category.
-    """
+    """Get POIs filtered by category (cached 2 min)"""
+    return _get_pois_by_category_cached(category, limit)
+
+@cached(search_cache)
+def _get_pois_by_category_cached(category: str, limit: int):
     query = """
         SELECT id, name, category, ST_Y(geom) as lat, ST_X(geom) as lon
         FROM delhi_points
@@ -305,9 +367,11 @@ def get_pois_by_category(category: str, limit: int = 500):
 
 @router.get("/pois/by-super-category")
 def get_pois_by_super_category(super_category: str, limit: int = 500):
-    """
-    Get POIs filtered by super category.
-    """
+    """Get POIs filtered by super category (cached 2 min)"""
+    return _get_pois_by_super_category_cached(super_category, limit)
+
+@cached(search_cache)
+def _get_pois_by_super_category_cached(super_category: str, limit: int):
     query = """
         SELECT id, name, category, ST_Y(geom) as lat, ST_X(geom) as lon, super_category
         FROM points_super
@@ -328,10 +392,11 @@ def get_pois_by_super_category(super_category: str, limit: int = 500):
 
 @router.get("/search/unified")
 def unified_search(q: str, limit: int = 15):
-    """
-    Unified search across areas, POIs, categories, and super categories.
-    Returns combined results with type indicators for the frontend.
-    """
+    """Unified search across areas, POIs, categories, super categories (cached)"""
+    return _unified_search_cached(q.lower(), limit)
+
+@cached(search_cache)
+def _unified_search_cached(q: str, limit: int):
     results = []
     per_type_limit = max(3, limit // 4)
     
@@ -475,12 +540,13 @@ def check_point_in_delhi(lat: float, lon: float):
 
 @router.get("/pincodes", response_model=List[dict])
 def get_pincodes():
-    """
-    Get all pincodes from delhi_pincode table
-    """
+    """Get all pincodes (cached 1 hour)"""
+    return _get_pincodes_cached()
+
+@cached(static_cache)
+def _get_pincodes_cached():
     query = "SELECT id, name FROM delhi_pincode"
     results = execute_query(query)
-    
     return [{"id": r[0], "pincode": r[1]} for r in results]
 
 @router.post("/analyze/score")
@@ -514,7 +580,11 @@ def chat(message: dict):
 
 @router.get("/delhi_boundary")
 def get_delhi_boundary():
-    """Get Delhi city boundary as GeoJSON."""
+    """Get Delhi city boundary as GeoJSON (cached 1 hour)."""
+    return _get_delhi_boundary_cached()
+
+@cached(static_cache)
+def _get_delhi_boundary_cached():
     try:
         query = "SELECT ST_AsGeoJSON(geom) as geometry, name FROM delhi_city LIMIT 1"
         results = execute_query(query)
@@ -535,19 +605,42 @@ def get_delhi_boundary():
         print(f"Error fetching boundary: {e}")
         return {"type": "FeatureCollection", "features": []}
 
+
+# ============================================
+# External API Routes (with caching)
+# ============================================
+
 @router.get("/external/poi")
 def get_external_poi(lat: float, lon: float, category: Optional[str] = None):
-    """Get points of interest near a location from LatLong API."""
+    """Get points of interest near a location (cached 10 min)."""
+    r_lat = round(lat, 4)
+    r_lon = round(lon, 4)
+    return _external_poi_cached(r_lat, r_lon, category)
+
+@cached(external_cache)
+def _external_poi_cached(lat: float, lon: float, category: Optional[str]):
     return latlong_client.get_pois(lat, lon, category=category)
 
 @router.get("/external/reverse")
 def get_external_reverse(lat: float, lon: float):
-    """Get address for coordinates from LatLong API."""
+    """Get address for coordinates (cached 10 min)."""
+    r_lat = round(lat, 4)
+    r_lon = round(lon, 4)
+    return _external_reverse_cached(r_lat, r_lon)
+
+@cached(external_cache)
+def _external_reverse_cached(lat: float, lon: float):
     return latlong_client.reverse_geocode(lat, lon)
 
 @router.get("/external/isochrone")
 def get_external_isochrone(lat: float, lon: float, distance: float = 1.0):
-    """Get isochrone (reachable area) polygon from LatLong API."""
+    """Get isochrone polygon (cached 10 min)."""
+    r_lat = round(lat, 4)
+    r_lon = round(lon, 4)
+    return _external_isochrone_cached(r_lat, r_lon, distance)
+
+@cached(external_cache)
+def _external_isochrone_cached(lat: float, lon: float, distance: float):
     return latlong_client.get_isochrone(lat, lon, distance_km=distance)
 
 @router.get("/external/distance")
@@ -557,20 +650,42 @@ def get_external_distance(lat1: float, lon1: float, lat2: float, lon2: float):
 
 @router.get("/external/autocomplete")
 def get_external_autocomplete(query: str, lat: Optional[float] = None, lon: Optional[float] = None, limit: int = 10):
-    """Get autocomplete suggestions for a search query from LatLong API."""
+    """Get autocomplete suggestions (cached 1 min)."""
+    r_lat = round(lat, 4) if lat else None
+    r_lon = round(lon, 4) if lon else None
+    return _external_autocomplete_cached(query.lower(), r_lat, r_lon, limit)
+
+@cached(search_cache)
+def _external_autocomplete_cached(query: str, lat: Optional[float], lon: Optional[float], limit: int):
     return latlong_client.autocomplete(query, lat=lat, lon=lon, limit=limit)
 
 @router.get("/external/geocode")
 def get_external_geocode(address: str):
-    """Convert address to coordinates using LatLong API."""
+    """Convert address to coordinates (cached 10 min)."""
+    return _external_geocode_cached(address.lower())
+
+@cached(external_cache)
+def _external_geocode_cached(address: str):
     return latlong_client.geocode(address)
 
 @router.get("/external/validate")
 def get_external_validate(address: str, lat: float, lon: float):
-    """Validate if an address matches given coordinates using LatLong API."""
+    """Validate address/coordinates match (cached 10 min)."""
+    r_lat = round(lat, 4)
+    r_lon = round(lon, 4)
+    return _external_validate_cached(address.lower(), r_lat, r_lon)
+
+@cached(external_cache)
+def _external_validate_cached(address: str, lat: float, lon: float):
     return latlong_client.validate_address(address, lat, lon)
 
 @router.get("/external/landmarks")
 def get_external_landmarks(lat: float, lon: float):
-    """Get nearby landmarks from LatLong API."""
+    """Get nearby landmarks (cached 10 min)."""
+    r_lat = round(lat, 4)
+    r_lon = round(lon, 4)
+    return _external_landmarks_cached(r_lat, r_lon)
+
+@cached(external_cache)
+def _external_landmarks_cached(lat: float, lon: float):
     return latlong_client.get_landmarks(lat, lon)

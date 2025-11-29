@@ -18,3 +18,5 @@ psycopg2-binary
 asyncpg
 sqlalchemy[asyncio]
 geoalchemy2
+# Caching
+cachetools
