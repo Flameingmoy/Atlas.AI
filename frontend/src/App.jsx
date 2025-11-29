@@ -143,7 +143,8 @@ function App() {
           setSidePanel({ type: 'error', content: result.error || 'Failed to get recommendations' });
         }
       } catch (error) {
-        setSidePanel({ type: 'error', content: 'Error getting recommendations' });
+        const errorMsg = error.response?.data?.detail || error.message || 'Error getting recommendations';
+        setSidePanel({ type: 'error', content: errorMsg });
       }
     } else if (isAreaAnalysisQuery(userMsg)) {
       const areaName = extractAreaName(userMsg);
@@ -156,10 +157,8 @@ function App() {
             if (result.centroid) {
               setMapCenter({ lat: result.centroid.lat, lon: result.centroid.lon, zoom: 14 });
             }
-            const geojson = await getAreaGeometry([result.area]);
-            if (geojson.features?.length > 0) {
-              setRecommendations({ recommendations: [{ area: result.area, centroid: result.centroid }] });
-            }
+            // Clear any previous location recommendations (area analysis uses side panel only)
+            setRecommendations(null);
           } else {
             setSidePanel({ type: 'error', content: result.error || 'Failed to analyze area' });
           }
