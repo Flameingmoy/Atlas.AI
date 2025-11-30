@@ -420,13 +420,15 @@ export const fetchIsochrone = async (lat, lon, distance = 1.0) => {
  * Get business location recommendations
  * @param {string} query - Natural language query like "I want to open a cafe"
  * @param {number} radiusKm - Analysis radius in km (default 1.0)
+ * @param {boolean} deepResearch - Enable real-time web research (default false)
  * @returns {Promise<object>} Recommendations with top 3 areas
  */
-export const getLocationRecommendations = async (query, radiusKm = 1.0) => {
+export const getLocationRecommendations = async (query, radiusKm = 1.0, deepResearch = false) => {
     try {
         const response = await axios.post(`${API_URL}/recommend/location`, {
             query,
-            radius_km: radiusKm
+            radius_km: radiusKm,
+            deep_research: deepResearch
         });
         return response.data;
     } catch (error) {
@@ -466,11 +468,15 @@ export const getAreaGeometry = async (names) => {
 /**
  * Analyze what businesses to open in a specific area
  * @param {string} area - Area name like "Hauz Khas"
+ * @param {boolean} deepResearch - Enable real-time web research (default false)
  * @returns {Promise<object>} Analysis with recommendations
  */
-export const analyzeAreaOpportunities = async (area) => {
+export const analyzeAreaOpportunities = async (area, deepResearch = false) => {
     try {
-        const response = await axios.post(`${API_URL}/analyze/area`, { area });
+        const response = await axios.post(`${API_URL}/analyze/area`, { 
+            area,
+            deep_research: deepResearch
+        });
         return response.data;
     } catch (error) {
         console.error("Error analyzing area:", error);

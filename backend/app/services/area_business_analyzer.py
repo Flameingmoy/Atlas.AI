@@ -4,8 +4,14 @@ Analyzes what businesses would be good to open in a specific area
 by looking at gaps (underserved categories) and complementary opportunities.
 """
 import os
+import pandas as pd
 from typing import Dict, List, Any, Optional
 from app.core.db import execute_query
+from app.services.location_recommender import WEIGHTS, COMPLEMENTARY_CATEGORIES
+
+# Path to area scores CSV
+DATA_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'data')
+AREA_SCORES_CSV = os.path.join(DATA_DIR, 'Delhi_Areas_All_11_Criteria_Real_Data.csv')
 
 # Complementary business relationships
 COMPLEMENTARY_MAP = {
@@ -46,7 +52,40 @@ class AreaBusinessAnalyzer:
     """Analyzes business opportunities in a specific area"""
     
     def __init__(self):
-        pass
+        self._load_area_scores()
+    
+    def _load_area_scores(self):
+        """Load area scores from CSV"""
+        try:
+            self.areas_df = pd.read_csv(AREA_SCORES_CSV)
+        except FileNotFoundError:
+            self.areas_df = None
+    
+    def get_area_base_score(self, area_name: str, super_category: str) -> Optional[float]:
+        """Calculate base score for an area and business category"""
+        if self.areas_df is None:
+            return None
+        
+        weights = WEIGHTS.get(super_category, WEIGHTS.get('Other / Misc', {}))
+        if not weights:
+            return None
+        
+        # Find the area in dataframe (case-insensitive)
+        area_row = self.areas_df[self.areas_df['name'].str.lower() == area_name.lower()]
+        if area_row.empty:
+            # Try fuzzy match
+            area_row = self.areas_df[self.areas_df['name'].str.lower().str.contains(area_name.lower())]
+        
+        if area_row.empty:
+            return None
+        
+        row = area_row.iloc[0]
+        score = 0.0
+        for feature, weight in weights.items():
+            if feature in row:
+                score += (row[feature] * weight / 100)
+        
+        return round(score, 2)
     
     def get_area_centroid(self, area_name: str) -> Optional[Dict]:
         """Get centroid coordinates for an area"""
@@ -171,6 +210,131 @@ class AreaBusinessAnalyzer:
         # Calculate average per area
         return {r[0]: float(r[1]) / num_areas for r in results}
     
+    def get_delhi_total_stats(self) -> Dict[str, Any]:
+        """Get city-wide statistics for trend comparison"""
+        # Get total POI count
+        total_query = "SELECT COUNT(*) FROM points_super"
+        total_result = execute_query(total_query, ())
+        total_pois = total_result[0][0] if total_result else 0
+        
+        # Get number of areas
+        area_count_query = "SELECT COUNT(*) FROM delhi_area"
+        area_result = execute_query(area_count_query, ())
+        num_areas = area_result[0][0] if area_result else 1
+        
+        # Get category count
+        cat_query = "SELECT COUNT(DISTINCT super_category) FROM points_super"
+        cat_result = execute_query(cat_query, ())
+        total_categories = cat_result[0][0] if cat_result else 0
+        
+        return {
+            "total_pois": total_pois,
+            "num_areas": num_areas,
+            "avg_pois_per_area": total_pois / num_areas if num_areas > 0 else 0,
+            "total_categories": total_categories
+        }
+    
+    def calculate_area_trend(self, area_distribution: Dict[str, int], 
+                             delhi_average: Dict[str, float],
+                             delhi_stats: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Calculate area trend indicator based on:
+        1. POI density relative to city average
+        2. Category diversity (how many categories are present)
+        3. Competition concentration (how evenly distributed businesses are)
+        
+        Returns: {
+            'indicator': 'emerging' | 'growing' | 'saturated',
+            'emoji': '🌱' | '📈' | '🔴',
+            'label': 'Emerging Market' | 'Growing Market' | 'Saturated Market',
+            'reason': explanation string,
+            'metrics': detailed breakdown
+        }
+        """
+        total_pois = sum(area_distribution.values())
+        avg_pois_per_area = delhi_stats.get("avg_pois_per_area", 1)
+        total_categories = delhi_stats.get("total_categories", 1)
+        
+        # 1. POI Density Score (0-100)
+        # Ratio of area POIs to city average
+        density_ratio = total_pois / avg_pois_per_area if avg_pois_per_area > 0 else 0
+        
+        # 2. Category Diversity Score (0-100)
+        # How many of the total categories are present
+        categories_present = len(area_distribution)
+        diversity_ratio = categories_present / total_categories if total_categories > 0 else 0
+        
+        # 3. Competition Concentration (0-100, higher = more concentrated = less diverse)
+        # Using Herfindahl-Hirschman Index style calculation
+        if total_pois > 0:
+            shares = [(count / total_pois) ** 2 for count in area_distribution.values()]
+            concentration = sum(shares)  # 0 to 1, where 1 = perfectly concentrated
+        else:
+            concentration = 0
+        
+        # Build metrics for detailed breakdown
+        metrics = {
+            "poi_density": round(density_ratio * 100, 1),
+            "category_diversity": round(diversity_ratio * 100, 1),
+            "competition_concentration": round(concentration * 100, 1),
+            "total_pois": total_pois,
+            "categories_present": categories_present,
+            "city_avg_pois": round(avg_pois_per_area, 1)
+        }
+        
+        # Classification logic
+        # Emerging: Low density, low diversity
+        # Growing: Medium density, good diversity, moderate concentration
+        # Saturated: High density, high diversity, varied concentration
+        
+        reasons = []
+        
+        if density_ratio < 0.5:
+            # Low POI density - Emerging
+            indicator = "emerging"
+            emoji = "🌱"
+            label = "Emerging Market"
+            reasons.append(f"Low business density ({total_pois} POIs vs {round(avg_pois_per_area)} city avg)")
+            if diversity_ratio < 0.5:
+                reasons.append(f"Only {categories_present} of {total_categories} categories present")
+            else:
+                reasons.append("Room for early movers in multiple categories")
+                
+        elif density_ratio < 1.2:
+            # Medium density - Growing
+            indicator = "growing"
+            emoji = "📈"
+            label = "Growing Market"
+            reasons.append(f"Moderate business activity ({total_pois} POIs, {round(density_ratio * 100)}% of city avg)")
+            if concentration < 0.3:
+                reasons.append("Balanced business mix with opportunities")
+            else:
+                # Find dominant category
+                dominant = max(area_distribution.items(), key=lambda x: x[1])
+                reasons.append(f"Some concentration in {dominant[0]} ({dominant[1]} POIs)")
+                
+        else:
+            # High density - Saturated
+            indicator = "saturated"
+            emoji = "🔴"
+            label = "Saturated Market"
+            reasons.append(f"High business density ({total_pois} POIs, {round(density_ratio * 100)}% of city avg)")
+            if diversity_ratio > 0.7:
+                reasons.append(f"All major categories well-represented ({categories_present} categories)")
+            # Find dominant category
+            dominant = max(area_distribution.items(), key=lambda x: x[1])
+            dominant_pct = round((dominant[1] / total_pois) * 100)
+            if dominant_pct > 30:
+                reasons.append(f"Heavy competition in {dominant[0]} ({dominant_pct}% market share)")
+        
+        return {
+            "indicator": indicator,
+            "emoji": emoji,
+            "label": label,
+            "reason": " • ".join(reasons),
+            "metrics": metrics
+        }
+    
     def analyze_gaps(self, area_distribution: Dict[str, int], 
                      delhi_average: Dict[str, float]) -> List[Dict]:
         """Find categories that are underrepresented in the area"""
@@ -288,13 +452,44 @@ class AreaBusinessAnalyzer:
             if gap['category'] not in seen_categories and gap['status'] in ['underserved', 'moderate']:
                 seen_categories.add(gap['category'])
                 examples = BUSINESS_EXAMPLES.get(gap['category'], [])
+                
+                # Generate data-driven cons for gap opportunities
+                gap_cons = []
+                if gap['area_count'] == 0:
+                    gap_cons.append(f"Zero existing {gap['category']} businesses - unproven market")
+                elif gap['area_count'] < 5:
+                    gap_cons.append(f"Only {gap['area_count']} existing businesses - limited proven demand")
+                
+                # Check if the gap is extreme (might indicate area isn't suitable)
+                if gap['gap_score'] > 90:
+                    gap_cons.append(f"Very low presence ({gap['area_count']} vs {gap['delhi_average']} avg) - may indicate unsuitable location")
+                
+                # Check if complementary businesses exist to drive traffic
+                complementary_cats = COMPLEMENTARY_MAP.get(gap['category'], [])
+                complementary_count = sum(area_distribution.get(c, 0) for c in complementary_cats)
+                if complementary_count < 10:
+                    gap_cons.append(f"Limited supporting businesses ({complementary_count} complementary POIs)")
+                
+                # Calculate scoring breakdown
+                base_score = self.get_area_base_score(actual_area, gap['category'])
+                # Opportunity score: inverse of competition (higher when fewer competitors)
+                opportunity_score = gap['gap_score']  # Already calculated as gap score
+                # Ecosystem score: based on complementary businesses
+                ecosystem_score = min(100, (complementary_count / 50) * 100) if complementary_count > 0 else 0
+                
                 top_recommendations.append({
                     'rank': len(top_recommendations) + 1,
                     'category': gap['category'],
                     'reason': f"Gap opportunity - only {gap['area_count']} vs {gap['delhi_average']} Delhi avg",
                     'score': gap['gap_score'],
                     'examples': examples[:4],
-                    'type': 'gap'
+                    'type': 'gap',
+                    'cons': gap_cons[:2] if gap_cons else ["Low competition - first mover advantage but unproven demand"],
+                    'competitors': gap['area_count'],
+                    'complementary': complementary_count,
+                    'base_score': base_score,
+                    'opportunity_score': round(opportunity_score, 2),
+                    'ecosystem_score': round(ecosystem_score, 2)
                 })
         
         # Add top complementary opportunities
@@ -302,13 +497,47 @@ class AreaBusinessAnalyzer:
             if comp['category'] not in seen_categories and len(top_recommendations) < 5:
                 seen_categories.add(comp['category'])
                 examples = BUSINESS_EXAMPLES.get(comp['category'], [])
+                
+                # Generate data-driven cons for complementary opportunities
+                comp_cons = []
+                existing_count = comp['existing_complementary']
+                
+                if existing_count > 0:
+                    comp_cons.append(f"{existing_count} similar businesses already compete in this area")
+                
+                # Check saturation relative to Delhi average
+                cat_delhi_avg = delhi_average.get(comp['category'], 0)
+                if cat_delhi_avg > 0 and existing_count > cat_delhi_avg:
+                    saturation_pct = round((existing_count / cat_delhi_avg) * 100)
+                    comp_cons.append(f"Above Delhi average ({saturation_pct}% saturation)")
+                
+                # Check dependency on complementary businesses
+                comp_cons.append(f"Depends on traffic from {comp['reason'].split('(')[0].strip().split()[-1]} businesses")
+                
+                # Get complementary business count for this category
+                complementary_cats = COMPLEMENTARY_CATEGORIES.get(comp['category'], [])
+                complementary_count = sum(area_distribution.get(c, 0) for c in complementary_cats)
+                
+                # Calculate scoring breakdown
+                base_score = self.get_area_base_score(actual_area, comp['category'])
+                # Opportunity score: inverse of competition
+                opportunity_score = max(0, 100 - (existing_count / max(cat_delhi_avg, 1) * 50)) if cat_delhi_avg > 0 else 50
+                # Ecosystem score: high because this is complementary (driven by existing businesses)
+                ecosystem_score = min(100, (complementary_count / 30) * 100)
+                
                 top_recommendations.append({
                     'rank': len(top_recommendations) + 1,
                     'category': comp['category'],
                     'reason': comp['reason'],
                     'score': comp['opportunity_score'],
                     'examples': examples[:4],
-                    'type': 'complementary'
+                    'type': 'complementary',
+                    'cons': comp_cons[:2],
+                    'competitors': existing_count,
+                    'complementary': complementary_count,
+                    'base_score': base_score,
+                    'opportunity_score': round(opportunity_score, 2),
+                    'ecosystem_score': round(ecosystem_score, 2)
                 })
         
         # Calculate total POIs
@@ -317,6 +546,10 @@ class AreaBusinessAnalyzer:
         # Find dominant categories
         dominant = sorted(area_distribution.items(), key=lambda x: x[1], reverse=True)[:3]
         
+        # Calculate area trend indicator
+        delhi_stats = self.get_delhi_total_stats()
+        trend_indicator = self.calculate_area_trend(area_distribution, delhi_average, delhi_stats)
+        
         return {
             "success": True,
             "area": actual_area,
@@ -324,6 +557,7 @@ class AreaBusinessAnalyzer:
             "location_source": location_source,  # "area" or "poi"
             "radius_km": 1.0 if location_source == "poi" else None,  # radius used for POI-based analysis
             "total_pois": total_pois,
+            "trend_indicator": trend_indicator,
             "dominant_categories": [{"category": d[0], "count": d[1]} for d in dominant],
             "recommendations": top_recommendations,
             "gap_analysis": gaps[:5],
@@ -352,6 +586,63 @@ class AreaBusinessAnalyzer:
             msg += f"   - **Ideas:** {', '.join(rec['examples'])}\n\n"
         
         return msg
+    
+    def analyze_with_research(self, area_name: str) -> Dict[str, Any]:
+        """
+        Enhanced analysis that includes deep research insights for top 3 business categories.
+        
+        Args:
+            area_name: Name of the area to analyze
+            
+        Returns:
+            Standard analysis with added 'research' field for top 3 recommendations
+        """
+        # Get base analysis
+        base_result = self.analyze_area(area_name)
+        
+        if not base_result.get("success"):
+            return base_result
+        
+        # Import research agent
+        from app.services.deep_research_agent import get_research_agent
+        research_agent = get_research_agent()
+        
+        if not research_agent.is_available():
+            # Return base results with empty research
+            for rec in base_result.get("recommendations", [])[:3]:
+                rec["research"] = {
+                    "market_potential": "Deep research not available. Set TAVILY_API_KEY to enable.",
+                    "trends": [],
+                    "opportunities": [],
+                    "challenges": [],
+                    "sources": []
+                }
+            base_result["research_enabled"] = False
+            return base_result
+        
+        # Get area name and research top 3 categories
+        area = base_result.get("area", area_name)
+        top_categories = [rec['category'] for rec in base_result.get("recommendations", [])[:3]]
+        research_results = research_agent.research_multiple_categories(top_categories, area)
+        
+        # Merge research into recommendations
+        research_map = {r['category']: r for r in research_results}
+        for rec in base_result.get("recommendations", [])[:3]:
+            cat_research = research_map.get(rec['category'], {})
+            rec["research"] = {
+                "market_potential": cat_research.get("market_potential", ""),
+                "trends": cat_research.get("trends", []),
+                "opportunities": cat_research.get("opportunities", []),
+                "challenges": cat_research.get("challenges", []),
+                "sources": cat_research.get("sources", [])
+            }
+        
+        # Mark recommendations beyond top 3 as not researched
+        for rec in base_result.get("recommendations", [])[3:]:
+            rec["research"] = None
+        
+        base_result["research_enabled"] = True
+        return base_result
 
 
 # Singleton instance

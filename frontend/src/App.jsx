@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import Map from './components/Map';
 import SearchBar from './components/SearchBar';
 import { sendChatMessage, getLocationRecommendations, analyzeAreaOpportunities, getAreaGeometry } from './services/api';
-import { Send, X, Tag, Layers, Sparkles, TrendingUp, MessageSquare, MapPin, Building2, Lightbulb } from 'lucide-react';
+import { Send, X, Tag, Layers, Sparkles, TrendingUp, MessageSquare, MapPin, Building2, Lightbulb, History, ChevronRight, Search, Globe, ExternalLink } from 'lucide-react';
 
 function App() {
   const [activeLayers, setActiveLayers] = useState([]);
@@ -15,6 +15,11 @@ function App() {
   const [recommendations, setRecommendations] = useState(null);
   const [areaAnalysis, setAreaAnalysis] = useState(null);
   const [sidePanel, setSidePanel] = useState(null);
+  const [activeTab, setActiveTab] = useState('analysis'); // 'analysis' or 'recommendation'
+  const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const [chatHistory, setChatHistory] = useState([]); // Array of { query, type, data, timestamp }
+  const [showHistory, setShowHistory] = useState(false);
+  const [deepResearchEnabled, setDeepResearchEnabled] = useState(false); // Toggle for Tavily research
 
   const toggleLayer = (layer) => {
     setActiveLayers(prev =>
@@ -53,9 +58,37 @@ function App() {
   };
 
   const closeSidePanel = () => {
-    setSidePanel(null);
-    setRecommendations(null);
-    setAreaAnalysis(null);
+    setIsPanelOpen(false);
+  };
+
+  const togglePanel = () => {
+    setIsPanelOpen(prev => !prev);
+  };
+
+  const loadFromHistory = (historyItem) => {
+    setSidePanel(historyItem.panel);
+    setActiveTab(historyItem.activeTab);
+    if (historyItem.panel.locationData) {
+      setRecommendations(historyItem.panel.locationData);
+    }
+    if (historyItem.panel.analysisData) {
+      setAreaAnalysis(historyItem.panel.analysisData);
+      // Set recommendations for map highlighting
+      setRecommendations({ 
+        recommendations: [{ 
+          area: historyItem.panel.analysisData.area, 
+          centroid: historyItem.panel.analysisData.centroid,
+          location_source: historyItem.panel.analysisData.location_source,
+          radius_km: historyItem.panel.analysisData.radius_km,
+          composite_score: null,
+          competitors: null,
+          complementary: null,
+          _isAreaAnalysis: true
+        }] 
+      });
+    }
+    setIsPanelOpen(true);
+    setShowHistory(false);
   };
 
   const isBusinessLocationQuery = (query) => {
@@ -129,59 +162,101 @@ function App() {
     setChatInput("");
     setIsLoading(true);
 
-    if (isBusinessLocationQuery(userMsg)) {
+    // Determine query type and extract info
+    const isLocationQuery = isBusinessLocationQuery(userMsg);
+    const isAreaQuery = isAreaAnalysisQuery(userMsg);
+    const areaName = extractAreaName(userMsg);
+
+    let locationResult = null;
+    let analysisResult = null;
+
+    if (isLocationQuery) {
+      // User asked "Where to open X?" - get location recommendations
       try {
-        const result = await getLocationRecommendations(userMsg, 1.0);
-        if (result.success) {
-          setRecommendations(result);
-          setSidePanel({ type: 'recommendation', content: result });
-          if (result.recommendations?.length > 0) {
-            const top = result.recommendations[0];
+        locationResult = await getLocationRecommendations(userMsg, 1.0, deepResearchEnabled);
+        if (locationResult.success) {
+          setRecommendations(locationResult);
+          setActiveTab('recommendation');
+          if (locationResult.recommendations?.length > 0) {
+            const top = locationResult.recommendations[0];
             setMapCenter({ lat: top.centroid.lat, lon: top.centroid.lon, zoom: 12 });
           }
-        } else {
-          setSidePanel({ type: 'error', content: result.error || 'Failed to get recommendations' });
         }
       } catch (error) {
         const errorMsg = error.response?.data?.detail || error.message || 'Error getting recommendations';
         setSidePanel({ type: 'error', content: errorMsg });
+        setIsLoading(false);
+        return;
       }
-    } else if (isAreaAnalysisQuery(userMsg)) {
-      const areaName = extractAreaName(userMsg);
-      if (areaName) {
-        try {
-          const result = await analyzeAreaOpportunities(areaName);
-          if (result.success) {
-            setAreaAnalysis(result);
-            setSidePanel({ type: 'analysis', content: result });
-            if (result.centroid) {
-              setMapCenter({ lat: result.centroid.lat, lon: result.centroid.lon, zoom: 14 });
-            }
-            // Set recommendations with area info for polygon/circle highlighting (no medal markers)
-            setRecommendations({ 
-              recommendations: [{ 
-                area: result.area, 
-                centroid: result.centroid,
-                // For POI-based locations, include radius for circle drawing
-                location_source: result.location_source,
-                radius_km: result.radius_km,
-                // These prevent medal marker from showing undefined
-                composite_score: null,
-                competitors: null,
-                complementary: null,
-                _isAreaAnalysis: true  // Flag to skip medal markers
-              }] 
-            });
-          } else {
-            setSidePanel({ type: 'error', content: result.error || 'Failed to analyze area' });
+      
+      // Also show side panel with results
+      const newPanel = { 
+        type: 'unified', 
+        locationData: locationResult?.success ? locationResult : null,
+        analysisData: null 
+      };
+      setSidePanel(newPanel);
+      
+      // Save to history
+      if (locationResult?.success) {
+        setChatHistory(prev => [{
+          query: userMsg,
+          type: 'recommendation',
+          panel: newPanel,
+          activeTab: 'recommendation',
+          timestamp: new Date()
+        }, ...prev].slice(0, 10)); // Keep last 10
+      }
+      
+    } else if (isAreaQuery && areaName) {
+      // User asked "What business in X?" - get area analysis
+      try {
+        analysisResult = await analyzeAreaOpportunities(areaName, deepResearchEnabled);
+        if (analysisResult.success) {
+          setAreaAnalysis(analysisResult);
+          setActiveTab('analysis');
+          if (analysisResult.centroid) {
+            setMapCenter({ lat: analysisResult.centroid.lat, lon: analysisResult.centroid.lon, zoom: 14 });
           }
-        } catch (error) {
-          setSidePanel({ type: 'error', content: 'Could not find area "' + areaName + '"' });
+          // Set recommendations with area info for polygon/circle highlighting
+          setRecommendations({ 
+            recommendations: [{ 
+              area: analysisResult.area, 
+              centroid: analysisResult.centroid,
+              location_source: analysisResult.location_source,
+              radius_km: analysisResult.radius_km,
+              composite_score: null,
+              competitors: null,
+              complementary: null,
+              _isAreaAnalysis: true
+            }] 
+          });
         }
-      } else {
-        setSidePanel({ type: 'error', content: 'Please specify an area name (e.g., "What business to open in Hauz Khas?")' });
+      } catch (error) {
+        setSidePanel({ type: 'error', content: 'Could not find area "' + areaName + '"' });
+        setIsLoading(false);
+        return;
       }
-    } else {
+      
+      const newPanel = { 
+        type: 'unified', 
+        locationData: null,
+        analysisData: analysisResult?.success ? analysisResult : null 
+      };
+      setSidePanel(newPanel);
+      
+      // Save to history
+      if (analysisResult?.success) {
+        setChatHistory(prev => [{
+          query: userMsg,
+          type: 'analysis',
+          panel: newPanel,
+          activeTab: 'analysis',
+          timestamp: new Date()
+        }, ...prev].slice(0, 10)); // Keep last 10
+      }
+      
+    } else if (!isLocationQuery && !isAreaQuery) {
       setSidePanel({ 
         type: 'help', 
         content: {
@@ -195,7 +270,11 @@ function App() {
           ]
         }
       });
+    } else {
+      setSidePanel({ type: 'error', content: 'Please specify an area name (e.g., "What business to open in Hauz Khas?")' });
     }
+    
+    setIsPanelOpen(true);
     setIsLoading(false);
   };
 
@@ -254,213 +333,488 @@ function App() {
         recommendations={recommendations}
       />
 
+      {/* Panel Toggle Button (always visible in top right) */}
+      {!isPanelOpen && (
+        <button
+          onClick={togglePanel}
+          className="absolute top-4 right-4 z-[1000] bg-white/95 backdrop-blur-md p-3 rounded-full shadow-lg border border-gray-200 hover:bg-gray-50 hover:scale-105 transition-all"
+          title="Open Insights Panel"
+        >
+          <MessageSquare size={20} className="text-blue-600" />
+          {chatHistory.length > 0 && (
+            <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-medium">
+              {chatHistory.length}
+            </span>
+          )}
+        </button>
+      )}
+
       {/* Side Panel for Results */}
-      {sidePanel && (
-        <div className="absolute top-20 right-4 bottom-24 w-96 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200 z-[1000] flex flex-col overflow-hidden">
-          {/* Panel Header */}
-          <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
+      {isPanelOpen && (
+        <div className="absolute top-4 right-4 bottom-24 w-96 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200 z-[1000] flex flex-col overflow-hidden">
+          {/* Panel Header - Always visible */}
+          <div className="flex items-center justify-between p-3 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
             <div className="flex items-center gap-2">
-              {sidePanel.type === 'recommendation' && <Sparkles className="text-amber-500" size={20} />}
-              {sidePanel.type === 'analysis' && <Lightbulb className="text-green-500" size={20} />}
-              {sidePanel.type === 'help' && <MessageSquare className="text-blue-500" size={20} />}
-              {sidePanel.type === 'error' && <X className="text-red-500" size={20} />}
-              <h3 className="font-bold text-gray-800">
-                {sidePanel.type === 'recommendation' && 'Location Recommendations'}
-                {sidePanel.type === 'analysis' && 'Business Opportunities'}
-                {sidePanel.type === 'help' && 'How to Use'}
-                {sidePanel.type === 'error' && 'Oops!'}
-              </h3>
+              <MessageSquare className="text-blue-600" size={18} />
+              <h3 className="font-semibold text-gray-800">Insights Panel</h3>
             </div>
-            <button onClick={closeSidePanel} className="hover:bg-gray-200 rounded-full p-1">
-              <X size={18} className="text-gray-500" />
-            </button>
+            <div className="flex items-center gap-1">
+              {chatHistory.length > 0 && (
+                <button 
+                  onClick={() => setShowHistory(!showHistory)} 
+                  className={`relative p-1.5 rounded-full transition-colors ${showHistory ? 'bg-blue-100 text-blue-600' : 'hover:bg-gray-200 text-gray-500'}`}
+                  title="Chat History"
+                >
+                  <History size={16} />
+                  {!showHistory && (
+                    <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-medium">
+                      {chatHistory.length}
+                    </span>
+                  )}
+                </button>
+              )}
+              <button onClick={closeSidePanel} className="hover:bg-gray-200 rounded-full p-1.5">
+                <X size={16} className="text-gray-500" />
+              </button>
+            </div>
           </div>
 
-          {/* Panel Content */}
-          <div className="flex-1 overflow-y-auto p-4">
-            {/* Error */}
-            {sidePanel.type === 'error' && (
-              <div className="text-red-600 bg-red-50 p-4 rounded-lg">
-                {sidePanel.content}
-              </div>
-            )}
-
-            {/* Help */}
-            {sidePanel.type === 'help' && (
-              <div className="space-y-4">
-                <p className="text-gray-600">{sidePanel.content.message}</p>
+          {/* History View */}
+          {showHistory ? (
+            <div className="flex-1 overflow-y-auto p-4">
+              {chatHistory.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <History size={32} className="mx-auto mb-3 opacity-50" />
+                  <p className="text-sm">No history yet.</p>
+                  <p className="text-xs mt-1">Your queries will appear here.</p>
+                </div>
+              ) : (
                 <div className="space-y-2">
-                  {sidePanel.content.examples.map((ex, idx) => (
-                    <div 
+                  {chatHistory.map((item, idx) => (
+                    <button
                       key={idx}
-                      onClick={() => setChatInput(ex)}
-                      className="p-3 bg-blue-50 rounded-lg text-blue-700 cursor-pointer hover:bg-blue-100 transition-colors"
+                      onClick={() => loadFromHistory(item)}
+                      className="w-full text-left p-3 rounded-lg border border-gray-200 hover:bg-gray-50 hover:border-gray-300 transition-all group"
                     >
-                      "{ex}"
-                    </div>
+                      <div className="flex items-start gap-2">
+                        {item.type === 'recommendation' ? (
+                          <Sparkles size={16} className="text-amber-500 mt-0.5 flex-shrink-0" />
+                        ) : (
+                          <Lightbulb size={16} className="text-green-500 mt-0.5 flex-shrink-0" />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-gray-800 font-medium truncate">{item.query}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            {item.type === 'recommendation' ? 'Location Search' : 'Area Analysis'}
+                            {' • '}
+                            {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </p>
+                        </div>
+                        <ChevronRight size={16} className="text-gray-400 group-hover:text-gray-600 flex-shrink-0" />
+                      </div>
+                    </button>
                   ))}
                 </div>
+              )}
+            </div>
+          ) : sidePanel && sidePanel.type === 'unified' ? (
+            <>
+              {/* Tabs for unified panel */}
+              <div className="border-b border-gray-200 px-4 py-2 flex gap-1">
+                <button
+                  onClick={() => setActiveTab('analysis')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                    activeTab === 'analysis' 
+                      ? 'bg-green-100 text-green-700 shadow-sm' 
+                      : 'text-gray-500 hover:bg-gray-100'
+                  }`}
+                >
+                  <Lightbulb size={14} />
+                  Opportunities
+                </button>
+                <button
+                  onClick={() => setActiveTab('recommendation')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                    activeTab === 'recommendation' 
+                      ? 'bg-amber-100 text-amber-700 shadow-sm' 
+                      : 'text-gray-500 hover:bg-gray-100'
+                  }`}
+                >
+                  <Sparkles size={14} />
+                  Locations
+                </button>
               </div>
-            )}
 
-            {/* Location Recommendations */}
-            {sidePanel.type === 'recommendation' && sidePanel.content && (
-              <div className="space-y-4">
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <Building2 size={14} />
-                  <span>{sidePanel.content.business_type} • {sidePanel.content.super_category}</span>
-                </div>
+              {/* Panel Content */}
+              <div className="flex-1 overflow-y-auto p-4">
+                {/* Unified Panel - Location Recommendations Tab */}
+                {activeTab === 'recommendation' && (
+                  <div className="space-y-4">
+                    {sidePanel.locationData ? (
+                      <>
+                        <div className="flex items-center gap-2 text-sm text-gray-500">
+                          <Building2 size={14} />
+                          <span>{sidePanel.locationData.business_type} • {sidePanel.locationData.super_category}</span>
+                        </div>
 
-                <div className="space-y-3">
-                  {sidePanel.content.recommendations?.slice(0, 3).map((rec, idx) => (
-                    <div 
-                      key={rec.area}
-                      className={`p-4 rounded-xl cursor-pointer transition-all ${
-                        idx === 0 ? 'bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300' :
-                        idx === 1 ? 'bg-gradient-to-r from-gray-50 to-slate-50 border border-gray-200' :
-                        'bg-gray-50 border border-gray-100'
-                      }`}
-                      onClick={() => setMapCenter({ lat: rec.centroid.lat, lon: rec.centroid.lon, zoom: 14 })}
-                    >
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-xl">{['🥇', '🥈', '🥉'][idx]}</span>
-                        <span className="font-bold text-gray-800">{rec.area}</span>
-                        <span className="ml-auto text-lg font-bold text-blue-600">{rec.composite_score}</span>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2 text-xs">
-                        <div className="bg-white/50 rounded p-2 text-center">
-                          <div className="text-gray-500">Base</div>
-                          <div className="font-semibold">{rec.area_score}</div>
+                        <div className="space-y-3">
+                          {sidePanel.locationData.recommendations?.slice(0, 3).map((rec, idx) => (
+                            <div 
+                              key={rec.area}
+                              className={`p-4 rounded-xl cursor-pointer transition-all ${
+                                idx === 0 ? 'bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300' :
+                                idx === 1 ? 'bg-gradient-to-r from-gray-50 to-slate-50 border border-gray-200' :
+                                'bg-gray-50 border border-gray-100'
+                              }`}
+                              onClick={() => setMapCenter({ lat: rec.centroid.lat, lon: rec.centroid.lon, zoom: 14 })}
+                            >
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="text-xl">{['🥇', '🥈', '🥉'][idx]}</span>
+                                <span className="font-bold text-gray-800">{rec.area}</span>
+                                <span className="ml-auto text-lg font-bold text-blue-600">{rec.composite_score}</span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-2 text-xs">
+                                <div className="bg-white/50 rounded p-2 text-center">
+                                  <div className="text-gray-500">Base</div>
+                                  <div className="font-semibold">{rec.area_score}</div>
+                                </div>
+                                <div className="bg-white/50 rounded p-2 text-center">
+                                  <div className="text-gray-500">Opportunity</div>
+                                  <div className="font-semibold">{rec.opportunity_score}</div>
+                                </div>
+                                <div className="bg-white/50 rounded p-2 text-center">
+                                  <div className="text-gray-500">Ecosystem</div>
+                                  <div className="font-semibold">{rec.ecosystem_score}</div>
+                                </div>
+                              </div>
+                              <div className="mt-2 text-xs text-gray-500">
+                                {rec.competitors} competitors • {rec.complementary} complementary
+                              </div>
+                              
+                              {/* Deep Research Results */}
+                              {rec.research && (
+                                <div className="mt-3 pt-3 border-t border-gray-200/50 space-y-2">
+                                  <div className="flex items-center gap-1 text-xs text-purple-600 font-medium">
+                                    <Search size={12} />
+                                    <span>Deep Research Insights</span>
+                                  </div>
+                                  
+                                  {rec.research.pros?.length > 0 && (
+                                    <div className="space-y-1">
+                                      <div className="text-xs font-medium text-green-700">✓ Pros</div>
+                                      {rec.research.pros.slice(0, 2).map((pro, i) => (
+                                        <div key={i} className="text-xs text-green-600 bg-green-50 rounded px-2 py-1">{pro}</div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  
+                                  {rec.research.cons?.length > 0 && (
+                                    <div className="space-y-1">
+                                      <div className="text-xs font-medium text-red-700">✗ Cons</div>
+                                      {rec.research.cons.slice(0, 2).map((con, i) => (
+                                        <div key={i} className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{con}</div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  
+                                  {rec.research.insights?.length > 0 && (
+                                    <div className="space-y-1">
+                                      <div className="text-xs font-medium text-blue-700">💡 Insights</div>
+                                      {rec.research.insights.slice(0, 2).map((insight, i) => (
+                                        <div key={i} className="text-xs text-blue-600 bg-blue-50 rounded px-2 py-1">{insight}</div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  
+                                  {rec.research.sources?.length > 0 && (
+                                    <div className="text-xs text-gray-400 mt-1">
+                                      {rec.research.sources.length} source{rec.research.sources.length > 1 ? 's' : ''} cited
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
                         </div>
-                        <div className="bg-white/50 rounded p-2 text-center">
-                          <div className="text-gray-500">Opportunity</div>
-                          <div className="font-semibold">{rec.opportunity_score}</div>
-                        </div>
-                        <div className="bg-white/50 rounded p-2 text-center">
-                          <div className="text-gray-500">Ecosystem</div>
-                          <div className="font-semibold">{rec.ecosystem_score}</div>
-                        </div>
-                      </div>
-                      <div className="mt-2 text-xs text-gray-500">
-                        {rec.competitors} competitors • {rec.complementary} complementary
-                      </div>
-                    </div>
-                  ))}
-                </div>
 
-                {sidePanel.content.complementary_categories && (
-                  <div className="mt-4 p-3 bg-green-50 rounded-lg">
-                    <div className="text-xs font-semibold text-green-700 mb-1">Complementary Categories</div>
-                    <div className="flex flex-wrap gap-1">
-                      {sidePanel.content.complementary_categories.map(cat => (
-                        <span key={cat} className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs">{cat}</span>
-                      ))}
-                    </div>
+                        {sidePanel.locationData.complementary_categories && (
+                          <div className="mt-4 p-3 bg-green-50 rounded-lg">
+                            <div className="text-xs font-semibold text-green-700 mb-1">Complementary Categories</div>
+                            <div className="flex flex-wrap gap-1">
+                              {sidePanel.locationData.complementary_categories.map(cat => (
+                                <span key={cat} className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs">{cat}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-center py-8 text-gray-500">
+                        <Sparkles size={32} className="mx-auto mb-3 opacity-50" />
+                        <p className="text-sm">No location data available.</p>
+                        <p className="text-xs mt-1">Try asking "Where should I open a cafe?"</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Unified Panel - Business Opportunities Tab */}
+                {activeTab === 'analysis' && (
+                  <div className="space-y-4">
+                    {sidePanel.analysisData ? (
+                      <>
+                        <div className="text-center p-4 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl border border-indigo-100">
+                          <div className="text-2xl font-bold text-gray-800">{sidePanel.analysisData.area}</div>
+                          <div className="text-sm text-gray-500 mt-1">{sidePanel.analysisData.total_pois?.toLocaleString()} total businesses</div>
+                          
+                          {/* Trend Indicator */}
+                          {sidePanel.analysisData.trend_indicator && (
+                            <div className="mt-3">
+                              <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold ${
+                                sidePanel.analysisData.trend_indicator.indicator === 'emerging' 
+                                  ? 'bg-green-100 text-green-700 border border-green-200' 
+                                  : sidePanel.analysisData.trend_indicator.indicator === 'growing'
+                                    ? 'bg-amber-100 text-amber-700 border border-amber-200'
+                                    : 'bg-red-100 text-red-700 border border-red-200'
+                              }`}>
+                                <span>{sidePanel.analysisData.trend_indicator.emoji}</span>
+                                <span>{sidePanel.analysisData.trend_indicator.label}</span>
+                              </span>
+                              <p className="text-xs text-gray-500 mt-2 px-2">{sidePanel.analysisData.trend_indicator.reason}</p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Dominant Categories */}
+                        <div>
+                          <div className="text-sm font-semibold text-gray-700 mb-2">Current Business Landscape</div>
+                          <div className="flex flex-wrap gap-2">
+                            {sidePanel.analysisData.dominant_categories?.map(cat => (
+                              <div key={cat.category} className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
+                                {cat.category}: {cat.count}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Recommendations */}
+                        <div>
+                          <div className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                            <Lightbulb size={16} className="text-amber-500" />
+                            Recommended Business Categories
+                          </div>
+                          <div className="space-y-3">
+                            {sidePanel.analysisData.recommendations?.map((rec, idx) => (
+                              <div key={rec.category} className={`p-4 rounded-xl border ${
+                                rec.type === 'gap' 
+                                  ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200' 
+                                  : 'bg-gradient-to-br from-green-50 to-emerald-50 border-green-200'
+                              }`}>
+                                {/* Header Row */}
+                                <div className="flex items-start justify-between gap-3 mb-2">
+                                  <span className="font-bold text-gray-800 text-base">{idx + 1}. {rec.category}</span>
+                                  <span className={`text-xl font-bold tabular-nums ${
+                                    rec.type === 'gap' ? 'text-blue-600' : 'text-green-600'
+                                  }`}>{Math.round(rec.score)}</span>
+                                </div>
+                                
+                                {/* Type Tag */}
+                                <div className="mb-3">
+                                  <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${
+                                    rec.type === 'gap' ? 'bg-blue-200 text-blue-700' : 'bg-green-200 text-green-700'
+                                  }`}>
+                                    {rec.type === 'gap' ? 'Market Gap' : 'Complementary'}
+                                  </span>
+                                </div>
+                                
+                                {/* Score breakdown */}
+                                <div className="grid grid-cols-3 gap-2 mb-3">
+                                  <div className={`rounded-lg p-2 text-center ${
+                                    rec.type === 'gap' ? 'bg-blue-100/60' : 'bg-green-100/60'
+                                  }`}>
+                                    <div className="text-[10px] text-gray-500 uppercase tracking-wide">Base</div>
+                                    <div className="text-sm font-bold text-gray-800 mt-0.5">{rec.base_score ?? '—'}</div>
+                                  </div>
+                                  <div className={`rounded-lg p-2 text-center ${
+                                    rec.type === 'gap' ? 'bg-blue-100/60' : 'bg-green-100/60'
+                                  }`}>
+                                    <div className="text-[10px] text-gray-500 uppercase tracking-wide">Opportunity</div>
+                                    <div className="text-sm font-bold text-gray-800 mt-0.5">{rec.opportunity_score ?? '—'}</div>
+                                  </div>
+                                  <div className={`rounded-lg p-2 text-center ${
+                                    rec.type === 'gap' ? 'bg-blue-100/60' : 'bg-green-100/60'
+                                  }`}>
+                                    <div className="text-[10px] text-gray-500 uppercase tracking-wide">Ecosystem</div>
+                                    <div className="text-sm font-bold text-gray-800 mt-0.5">{rec.ecosystem_score ?? '—'}</div>
+                                  </div>
+                                </div>
+                                
+                                {/* Competition stats */}
+                                <div className="text-xs text-gray-500 mb-3">
+                                  {rec.competitors} competitors • {rec.complementary} complementary
+                                </div>
+                                
+                                {/* Pros */}
+                                <div className="mb-2">
+                                  <div className="flex items-center gap-1.5 mb-1">
+                                    <span className="text-green-600 text-sm">✓</span>
+                                    <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Pros</span>
+                                  </div>
+                                  <p className="text-xs text-gray-600 leading-relaxed pl-5">{rec.reason}</p>
+                                </div>
+                                
+                                {/* Cons */}
+                                {rec.cons && rec.cons.length > 0 && (
+                                  <div className="mb-3">
+                                    <div className="flex items-center gap-1.5 mb-1">
+                                      <span className="text-red-500 text-sm">✗</span>
+                                      <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Cons</span>
+                                    </div>
+                                    <ul className="text-xs text-gray-600 leading-relaxed pl-5 space-y-0.5">
+                                      {rec.cons.map((con, i) => (
+                                        <li key={i}>• {con}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                                
+                                {/* Examples */}
+                                <div className="flex flex-wrap gap-1.5">
+                                  {rec.examples?.map(ex => (
+                                    <span key={ex} className="px-2.5 py-1 bg-white/80 rounded-full text-xs text-gray-700 border border-gray-200 font-medium">{ex}</span>
+                                  ))}
+                                </div>
+                                
+                                {/* Deep Research Results */}
+                                {rec.research && (
+                                  <div className="mt-3 pt-3 border-t border-gray-200/50 space-y-2">
+                                    <div className="flex items-center gap-1 text-xs text-purple-600 font-medium">
+                                      <Search size={12} />
+                                      <span>Deep Research Insights</span>
+                                    </div>
+                                    
+                                    {rec.research.market_potential && (
+                                      <div className="text-xs text-purple-700 bg-purple-50 rounded px-2 py-1.5 font-medium">
+                                        📊 {rec.research.market_potential}
+                                      </div>
+                                    )}
+                                    
+                                    {rec.research.pros?.length > 0 && (
+                                      <div className="space-y-1">
+                                        <div className="text-xs font-medium text-green-700">✓ Real-time Pros</div>
+                                        {rec.research.pros.slice(0, 2).map((pro, i) => (
+                                          <div key={i} className="text-xs text-green-600 bg-green-50 rounded px-2 py-1">{pro}</div>
+                                        ))}
+                                      </div>
+                                    )}
+                                    
+                                    {rec.research.cons?.length > 0 && (
+                                      <div className="space-y-1">
+                                        <div className="text-xs font-medium text-red-700">✗ Real-time Cons</div>
+                                        {rec.research.cons.slice(0, 2).map((con, i) => (
+                                          <div key={i} className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{con}</div>
+                                        ))}
+                                      </div>
+                                    )}
+                                    
+                                    {rec.research.sources?.length > 0 && (
+                                      <div className="text-xs text-gray-400 mt-1">
+                                        {rec.research.sources.length} source{rec.research.sources.length > 1 ? 's' : ''} cited
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-center py-8 text-gray-500">
+                        <Lightbulb size={32} className="mx-auto mb-3 opacity-50" />
+                        <p className="text-sm">No area analysis available.</p>
+                        <p className="text-xs mt-1">Try asking "What business in Hauz Khas?"</p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            )}
-
-            {/* Area Analysis */}
-            {sidePanel.type === 'analysis' && sidePanel.content && (
-              <div className="space-y-4">
-                <div className="text-center p-3 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg">
-                  <div className="text-2xl font-bold text-gray-800">{sidePanel.content.area}</div>
-                  <div className="text-sm text-gray-500">{sidePanel.content.total_pois} total businesses</div>
+            </>
+          ) : sidePanel && (sidePanel.type === 'help' || sidePanel.type === 'error') ? (
+            <div className="flex-1 overflow-y-auto p-4">
+              {/* Error */}
+              {sidePanel.type === 'error' && (
+                <div className="text-red-600 bg-red-50 p-4 rounded-lg">
+                  {sidePanel.content}
                 </div>
+              )}
 
-                {/* Dominant Categories */}
-                <div>
-                  <div className="text-sm font-semibold text-gray-700 mb-2">Current Business Landscape</div>
-                  <div className="flex flex-wrap gap-2">
-                    {sidePanel.content.dominant_categories?.map(cat => (
-                      <div key={cat.category} className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs">
-                        {cat.category}: {cat.count}
+              {/* Help */}
+              {sidePanel.type === 'help' && (
+                <div className="space-y-4">
+                  <p className="text-gray-600">{sidePanel.content.message}</p>
+                  <div className="space-y-2">
+                    {sidePanel.content.examples.map((ex, idx) => (
+                      <div 
+                        key={idx}
+                        onClick={() => setChatInput(ex)}
+                        className="p-3 bg-blue-50 rounded-lg text-blue-700 cursor-pointer hover:bg-blue-100 transition-colors"
+                      >
+                        "{ex}"
                       </div>
                     ))}
                   </div>
                 </div>
-
-                {/* Recommendations */}
-                <div>
-                  <div className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                    <Lightbulb size={16} className="text-amber-500" />
-                    Recommended Business Categories
-                  </div>
-                  <div className="space-y-3">
-                    {sidePanel.content.recommendations?.map((rec, idx) => (
-                      <div key={rec.category} className={`p-4 rounded-xl border ${
-                        rec.type === 'gap' ? 'bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200' : 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200'
-                      }`}>
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-gray-800">{idx + 1}. {rec.category}</span>
-                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                              rec.type === 'gap' ? 'bg-blue-200 text-blue-700' : 'bg-green-200 text-green-700'
-                            }`}>
-                              {rec.type === 'gap' ? 'Market Gap' : 'Complementary'}
-                            </span>
-                          </div>
-                          <span className={`text-lg font-bold ${
-                            rec.type === 'gap' ? 'text-blue-600' : 'text-green-600'
-                          }`}>{Math.round(rec.score)}</span>
-                        </div>
-                        
-                        {/* Score breakdown */}
-                        <div className="grid grid-cols-3 gap-2 text-xs mb-3">
-                          <div className={`rounded p-2 text-center ${
-                            rec.type === 'gap' ? 'bg-blue-100/50' : 'bg-green-100/50'
-                          }`}>
-                            <div className="text-gray-500">Demand</div>
-                            <div className="font-semibold">{rec.type === 'gap' ? 'High' : 'Medium'}</div>
-                          </div>
-                          <div className={`rounded p-2 text-center ${
-                            rec.type === 'gap' ? 'bg-blue-100/50' : 'bg-green-100/50'
-                          }`}>
-                            <div className="text-gray-500">Supply</div>
-                            <div className="font-semibold">{rec.type === 'gap' ? 'Low' : 'Growing'}</div>
-                          </div>
-                          <div className={`rounded p-2 text-center ${
-                            rec.type === 'gap' ? 'bg-blue-100/50' : 'bg-green-100/50'
-                          }`}>
-                            <div className="text-gray-500">Fit</div>
-                            <div className="font-semibold">{Math.round(rec.score) > 70 ? 'Excellent' : Math.round(rec.score) > 40 ? 'Good' : 'Fair'}</div>
-                          </div>
-                        </div>
-                        
-                        <div className="text-xs text-gray-600 mb-2">{rec.reason}</div>
-                        <div className="flex flex-wrap gap-1">
-                          {rec.examples?.map(ex => (
-                            <span key={ex} className="px-2 py-1 bg-white/70 rounded-full text-xs text-gray-700 border border-gray-200">{ex}</span>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-gray-500 p-4">
+              <MessageSquare size={32} className="mb-3 opacity-50" />
+              <p className="text-sm text-center">No results yet.</p>
+              <p className="text-xs mt-1 text-center">Ask a question below to get started!</p>
+            </div>
+          )}
         </div>
       )}
 
       {/* Chat Input */}
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-[1000]">
-        <form onSubmit={handleChatSubmit} className="bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200 p-2 flex gap-2">
-          <input
-            type="text"
-            value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
-            placeholder="Ask: 'Where to open a cafe?' or 'What business in Hauz Khas?'"
-            className="flex-1 bg-transparent border-none outline-none px-4 py-3 text-gray-800 placeholder-gray-400"
-          />
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-6 py-2 rounded-xl font-medium transition-colors flex items-center justify-center"
-          >
-            {isLoading ? <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full" /> : <Send size={18} />}
-          </button>
+        <form onSubmit={handleChatSubmit} className="bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200 p-2">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              placeholder="Ask: 'Where to open a cafe?' or 'What business in Hauz Khas?'"
+              className="flex-1 bg-transparent border-none outline-none px-4 py-3 text-gray-800 placeholder-gray-400"
+            />
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-6 py-2 rounded-xl font-medium transition-colors flex items-center justify-center"
+            >
+              {isLoading ? <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full" /> : <Send size={18} />}
+            </button>
+          </div>
+          {/* Deep Research Toggle */}
+          <div className="flex items-center justify-between px-4 pt-2 border-t border-gray-100 mt-2">
+            <button
+              type="button"
+              onClick={() => setDeepResearchEnabled(!deepResearchEnabled)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                deepResearchEnabled 
+                  ? 'bg-purple-100 text-purple-700 border border-purple-200' 
+                  : 'bg-gray-100 text-gray-500 border border-gray-200 hover:bg-gray-200'
+              }`}
+            >
+              <Globe size={14} />
+              Deep Research
+              {deepResearchEnabled && <span className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-pulse" />}
+            </button>
+            {deepResearchEnabled && (
+              <span className="text-xs text-gray-400">Powered by Tavily AI • May take longer</span>
+            )}
+          </div>
         </form>
       </div>
     </div>

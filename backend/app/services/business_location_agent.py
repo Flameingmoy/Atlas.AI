@@ -138,10 +138,10 @@ class BusinessLocationAgent:
         
         # Use a capable model for understanding business intent
         self.llm = ChatGroq(
-            model="llama-3.3-70b-versatile",  # Fast and capable
+            model="openai/gpt-oss-120b",
             temperature=0,
             api_key=groq_api_key
-        )
+        )  # type: ignore
         
         self.recommender = get_recommender()
         
@@ -232,13 +232,15 @@ Examples:
                 return valid_cat
         return "Other / Misc"
     
-    def recommend_locations(self, user_query: str, isochrone_radius_km: float = 1.0) -> Dict[str, Any]:
+    def recommend_locations(self, user_query: str, isochrone_radius_km: float = 1.0,
+                            deep_research: bool = False) -> Dict[str, Any]:
         """
         Main entry point: understand query and return location recommendations.
         
         Args:
             user_query: Natural language query like "I want to open a cafe"
             isochrone_radius_km: Radius for analysis (default 1km)
+            deep_research: Enable real-time web research for insights
         
         Returns:
             Dict with business understanding and top 3 location recommendations
@@ -256,7 +258,15 @@ Examples:
         
         # Step 2: Get location recommendations
         super_category = extraction["super_category"]
-        recommendations = self.recommender.find_best_locations(super_category, isochrone_radius_km)
+        business_type = extraction.get("business_type", super_category)
+        
+        if deep_research:
+            # Use research-enhanced recommendations
+            recommendations = self.recommender.recommend_with_research(
+                super_category, business_type, isochrone_radius_km
+            )
+        else:
+            recommendations = self.recommender.find_best_locations(super_category, isochrone_radius_km)
         
         if "error" in recommendations:
             return {
@@ -277,6 +287,7 @@ Examples:
             "complementary_categories": recommendations.get("complementary_categories", []),
             "isochrone_radius_km": isochrone_radius_km,
             "recommendations": recommendations.get("recommendations", []),
+            "research_enabled": recommendations.get("research_enabled", False),
             "message": self._generate_response_message(extraction, recommendations)
         }
     

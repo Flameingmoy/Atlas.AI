@@ -383,6 +383,61 @@ class LocationRecommender:
             "all_top_10": results
         }
     
+    def recommend_with_research(self, super_category: str, business_type: str,
+                                isochrone_distance_km: float = 1.0) -> Dict:
+        """
+        Enhanced recommendation that includes deep research insights for top 3 areas.
+        
+        Args:
+            super_category: The business super category
+            business_type: Specific business type (e.g., "cafe", "gym")
+            isochrone_distance_km: Distance for isochrone analysis
+            
+        Returns:
+            Standard recommendation with added 'research' field for each area
+        """
+        # Get base recommendations
+        base_result = self.find_best_locations(super_category, isochrone_distance_km)
+        
+        if "error" in base_result:
+            return base_result
+        
+        # Import research agent
+        from app.services.deep_research_agent import get_research_agent
+        research_agent = get_research_agent()
+        
+        if not research_agent.is_available():
+            # Return base results with empty research
+            for rec in base_result.get("recommendations", []):
+                rec["research"] = {
+                    "pros": [],
+                    "cons": [],
+                    "market_insights": "Deep research not available. Set TAVILY_API_KEY to enable.",
+                    "sources": []
+                }
+            base_result["research_enabled"] = False
+            return base_result
+        
+        # Research top 3 areas
+        top_areas = [rec['area'] for rec in base_result.get("recommendations", [])]
+        research_results = research_agent.research_multiple_areas(top_areas, business_type)
+        
+        # Merge research into recommendations
+        research_map = {r['area']: r for r in research_results}
+        for rec in base_result.get("recommendations", []):
+            area_research = research_map.get(rec['area'], {})
+            rec["research"] = {
+                "pros": area_research.get("pros", []),
+                "cons": area_research.get("cons", []),
+                "market_insights": area_research.get("market_insights", ""),
+                "sources": area_research.get("sources", [])
+            }
+        
+        base_result["research_enabled"] = True
+        base_result["business_type"] = business_type
+        return base_result
+
+    
     def _simple_radius_count(self, lat: float, lon: float, radius_km: float,
                              super_category: str, complementary_cats: List[str]) -> Tuple[int, int]:
         """Fallback: count POIs within a simple radius (approximation)"""

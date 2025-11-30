@@ -26,7 +26,7 @@ class TextToSQLService:
         if not groq_api_key:
             raise ValueError("GROQ_API_KEY environment variable is not set")
         self.client = Groq(api_key=groq_api_key)
-        self.model = "llama-3.3-70b-versatile"
+        self.model = "openai/gpt-oss-120b"
         
     def get_database_schema(self) -> str:
         """

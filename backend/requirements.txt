@@ -20,3 +20,5 @@ sqlalchemy[asyncio]
 geoalchemy2
 # Caching
 cachetools
+# Deep Research
+tavily-python

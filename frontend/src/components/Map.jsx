@@ -175,7 +175,7 @@ const Map = ({ activeLayers, selectedLocation, mapCenter, filteredPOIs, recommen
             maxBounds: [[76.5, 28.0], [77.7, 29.2]]
         });
 
-        map.current.addControl(new maplibregl.NavigationControl(), 'top-right');
+        map.current.addControl(new maplibregl.NavigationControl(), 'bottom-left');
 
         map.current.on('load', () => {
             console.log('Latlong map loaded');

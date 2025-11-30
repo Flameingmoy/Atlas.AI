@@ -19,6 +19,7 @@ router = APIRouter()
 class LocationRecommendRequest(BaseModel):
     query: str
     radius_km: float = 1.0
+    deep_research: bool = False  # Enable Tavily-powered deep research
 
 # ============================================
 # Backend Caching Layer
@@ -712,11 +713,17 @@ def recommend_business_location(request: LocationRecommendRequest):
     - Competition (opportunity) score (20%)
     - Complementary businesses (ecosystem) score (20%)
     
+    If deep_research=True, also fetches real-time market insights from the web.
+    
     Returns top 3 areas with their centroids for map highlighting.
     """
     try:
         location_agent = get_business_location_agent()
-        result = location_agent.recommend_locations(request.query, request.radius_km)
+        result = location_agent.recommend_locations(
+            request.query, 
+            request.radius_km,
+            request.deep_research
+        )
         
         if not result.get("success"):
             raise HTTPException(status_code=400, detail=result.get("error", "Failed to get recommendations"))
@@ -772,6 +779,7 @@ def get_area_geometry(names: str):
 
 class AreaAnalysisRequest(BaseModel):
     area: str
+    deep_research: bool = False  # Enable Tavily-powered deep research
 
 @router.post("/analyze/area")
 def analyze_area_opportunities(request: AreaAnalysisRequest):
@@ -782,12 +790,18 @@ def analyze_area_opportunities(request: AreaAnalysisRequest):
     - Gap analysis (underserved business categories vs Delhi average)
     - Complementary opportunities (businesses that complement existing ones)
     
+    If deep_research=True, also fetches real-time market insights from the web.
+    
     Returns top 5 recommended business categories with examples.
     """
     try:
         from app.services.area_business_analyzer import get_area_analyzer
         analyzer = get_area_analyzer()
-        result = analyzer.analyze_area(request.area)
+        
+        if request.deep_research:
+            result = analyzer.analyze_with_research(request.area)
+        else:
+            result = analyzer.analyze_area(request.area)
         
         if not result.get("success"):
             raise HTTPException(status_code=400, detail=result.get("error", "Analysis failed"))

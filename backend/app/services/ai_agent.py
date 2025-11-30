@@ -55,10 +55,10 @@ class AIAgentService:
             raise ValueError("GROQ_API_KEY environment variable is not set")
         
         self.llm = ChatGroq(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             temperature=0,
             api_key=groq_api_key
-        )
+        )  # type: ignore
         
         # Bind tools to the LLM
         self.tools = [set_map_layer, get_delhi_info, query_database]
