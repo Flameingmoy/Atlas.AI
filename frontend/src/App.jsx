@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import Map from './components/Map';
 import SearchBar from './components/SearchBar';
 import { sendChatMessage, getLocationRecommendations, analyzeAreaOpportunities, getAreaGeometry } from './services/api';
-import { Send, X, Tag, Layers, Sparkles, TrendingUp, MessageSquare, MapPin, Building2, Lightbulb, History, ChevronRight, Search, Globe, ExternalLink } from 'lucide-react';
+import { Send, X, Tag, Layers, Sparkles, TrendingUp, MessageSquare, MapPin, Building2, Lightbulb, History, ChevronRight, Search, Globe, ExternalLink, Check } from 'lucide-react';
 
 function App() {
   const [activeLayers, setActiveLayers] = useState([]);
@@ -20,6 +20,8 @@ function App() {
   const [chatHistory, setChatHistory] = useState([]); // Array of { query, type, data, timestamp }
   const [showHistory, setShowHistory] = useState(false);
   const [deepResearchEnabled, setDeepResearchEnabled] = useState(false); // Toggle for Tavily research
+  const [isResearching, setIsResearching] = useState(false); // Track deep research in progress
+  const [researchComplete, setResearchComplete] = useState(false); // Track when research is done
 
   const toggleLayer = (layer) => {
     setActiveLayers(prev =>
@@ -161,6 +163,12 @@ function App() {
     const userMsg = chatInput;
     setChatInput("");
     setIsLoading(true);
+    setResearchComplete(false);
+    
+    // Set researching state if deep research is enabled
+    if (deepResearchEnabled) {
+      setIsResearching(true);
+    }
 
     // Determine query type and extract info
     const isLocationQuery = isBusinessLocationQuery(userMsg);
@@ -276,6 +284,15 @@ function App() {
     
     setIsPanelOpen(true);
     setIsLoading(false);
+    setIsResearching(false);
+    
+    // Check if research was completed
+    const hasResearch = locationResult?.research_enabled || analysisResult?.research_enabled;
+    if (deepResearchEnabled && hasResearch) {
+      setResearchComplete(true);
+      // Auto-hide the "complete" badge after 5 seconds
+      setTimeout(() => setResearchComplete(false), 5000);
+    }
   };
 
   return (
@@ -444,6 +461,36 @@ function App() {
                   Locations
                 </button>
               </div>
+              
+              {/* Deep Research Status Indicators */}
+              {isResearching && (
+                <div className="mx-4 mt-3 p-3 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl border border-purple-200 animate-pulse">
+                  <div className="flex items-center gap-3">
+                    <div className="relative">
+                      <Globe className="text-purple-500 animate-spin" size={20} />
+                      <span className="absolute -top-1 -right-1 w-2 h-2 bg-purple-500 rounded-full animate-ping" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-purple-700">Deep Research in Progress...</div>
+                      <div className="text-xs text-purple-500">Searching the web with Tavily AI for real-time insights</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {researchComplete && !isResearching && (
+                <div className="mx-4 mt-3 p-3 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border border-green-200">
+                  <div className="flex items-center gap-3">
+                    <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
+                      <Check className="text-white" size={14} />
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-green-700">Research Complete!</div>
+                      <div className="text-xs text-green-500">Real-time insights added to recommendations below</div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Panel Content */}
               <div className="flex-1 overflow-y-auto p-4">
@@ -499,6 +546,12 @@ function App() {
                                     <span>Deep Research Insights</span>
                                   </div>
                                   
+                                  {rec.research.market_insights && (
+                                    <div className="text-xs text-purple-700 bg-purple-50 rounded px-2 py-1.5 font-medium">
+                                      💡 {rec.research.market_insights}
+                                    </div>
+                                  )}
+                                  
                                   {rec.research.pros?.length > 0 && (
                                     <div className="space-y-1">
                                       <div className="text-xs font-medium text-green-700">✓ Pros</div>
@@ -513,15 +566,6 @@ function App() {
                                       <div className="text-xs font-medium text-red-700">✗ Cons</div>
                                       {rec.research.cons.slice(0, 2).map((con, i) => (
                                         <div key={i} className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{con}</div>
-                                      ))}
-                                    </div>
-                                  )}
-                                  
-                                  {rec.research.insights?.length > 0 && (
-                                    <div className="space-y-1">
-                                      <div className="text-xs font-medium text-blue-700">💡 Insights</div>
-                                      {rec.research.insights.slice(0, 2).map((insight, i) => (
-                                        <div key={i} className="text-xs text-blue-600 bg-blue-50 rounded px-2 py-1">{insight}</div>
                                       ))}
                                     </div>
                                   )}
@@ -801,19 +845,24 @@ function App() {
             <button
               type="button"
               onClick={() => setDeepResearchEnabled(!deepResearchEnabled)}
+              disabled={isResearching}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                 deepResearchEnabled 
                   ? 'bg-purple-100 text-purple-700 border border-purple-200' 
                   : 'bg-gray-100 text-gray-500 border border-gray-200 hover:bg-gray-200'
-              }`}
+              } ${isResearching ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              <Globe size={14} />
+              <Globe size={14} className={isResearching ? 'animate-spin' : ''} />
               Deep Research
-              {deepResearchEnabled && <span className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-pulse" />}
+              {deepResearchEnabled && !isResearching && <span className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-pulse" />}
             </button>
-            {deepResearchEnabled && (
+            {isResearching ? (
+              <span className="text-xs text-purple-600 font-medium animate-pulse">
+                🔍 Researching with Tavily AI...
+              </span>
+            ) : deepResearchEnabled ? (
               <span className="text-xs text-gray-400">Powered by Tavily AI • May take longer</span>
-            )}
+            ) : null}
           </div>
         </form>
       </div>
