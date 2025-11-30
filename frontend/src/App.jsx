@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import Map from './components/Map';
 import SearchBar from './components/SearchBar';
 import { sendChatMessage, getLocationRecommendations, analyzeAreaOpportunities, getAreaGeometry } from './services/api';
@@ -547,16 +548,33 @@ function App() {
                                   </div>
                                   
                                   {rec.research.market_insights && (
-                                    <div className="text-xs text-purple-700 bg-purple-50 rounded px-2 py-1.5 font-medium">
-                                      💡 {rec.research.market_insights}
+                                    <div className="text-xs text-purple-700 bg-purple-50 rounded px-2 py-1.5 prose prose-xs prose-purple max-w-none">
+                                      <ReactMarkdown
+                                        components={{
+                                          p: ({children}) => <p className="mb-1 last:mb-0">{children}</p>,
+                                          strong: ({children}) => <strong className="font-semibold text-purple-800">{children}</strong>,
+                                          a: ({href, children}) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-purple-600 underline hover:text-purple-800">{children}</a>
+                                        }}
+                                      >
+                                        {`💡 ${rec.research.market_insights}`}
+                                      </ReactMarkdown>
                                     </div>
                                   )}
                                   
                                   {rec.research.pros?.length > 0 && (
                                     <div className="space-y-1">
                                       <div className="text-xs font-medium text-green-700">✓ Pros</div>
-                                      {rec.research.pros.slice(0, 2).map((pro, i) => (
-                                        <div key={i} className="text-xs text-green-600 bg-green-50 rounded px-2 py-1">{pro}</div>
+                                      {rec.research.pros.slice(0, 3).map((pro, i) => (
+                                        <div key={i} className="text-xs text-green-600 bg-green-50 rounded px-2 py-1 prose prose-xs prose-green max-w-none">
+                                          <ReactMarkdown
+                                            components={{
+                                              p: ({children}) => <span>{children}</span>,
+                                              strong: ({children}) => <strong className="font-semibold">{children}</strong>
+                                            }}
+                                          >
+                                            {pro}
+                                          </ReactMarkdown>
+                                        </div>
                                       ))}
                                     </div>
                                   )}
@@ -564,8 +582,17 @@ function App() {
                                   {rec.research.cons?.length > 0 && (
                                     <div className="space-y-1">
                                       <div className="text-xs font-medium text-red-700">✗ Cons</div>
-                                      {rec.research.cons.slice(0, 2).map((con, i) => (
-                                        <div key={i} className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{con}</div>
+                                      {rec.research.cons.slice(0, 3).map((con, i) => (
+                                        <div key={i} className="text-xs text-red-600 bg-red-50 rounded px-2 py-1 prose prose-xs prose-red max-w-none">
+                                          <ReactMarkdown
+                                            components={{
+                                              p: ({children}) => <span>{children}</span>,
+                                              strong: ({children}) => <strong className="font-semibold">{children}</strong>
+                                            }}
+                                          >
+                                            {con}
+                                          </ReactMarkdown>
+                                        </div>
                                       ))}
                                     </div>
                                   )}
@@ -738,16 +765,33 @@ function App() {
                                     </div>
                                     
                                     {rec.research.market_potential && (
-                                      <div className="text-xs text-purple-700 bg-purple-50 rounded px-2 py-1.5 font-medium">
-                                        📊 {rec.research.market_potential}
+                                      <div className="text-xs text-purple-700 bg-purple-50 rounded px-2 py-1.5 prose prose-xs prose-purple max-w-none">
+                                        <ReactMarkdown
+                                          components={{
+                                            p: ({children}) => <p className="mb-1 last:mb-0">{children}</p>,
+                                            strong: ({children}) => <strong className="font-semibold text-purple-800">{children}</strong>,
+                                            a: ({href, children}) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-purple-600 underline hover:text-purple-800">{children}</a>
+                                          }}
+                                        >
+                                          {`📊 ${rec.research.market_potential}`}
+                                        </ReactMarkdown>
                                       </div>
                                     )}
                                     
                                     {rec.research.pros?.length > 0 && (
                                       <div className="space-y-1">
                                         <div className="text-xs font-medium text-green-700">✓ Real-time Pros</div>
-                                        {rec.research.pros.slice(0, 2).map((pro, i) => (
-                                          <div key={i} className="text-xs text-green-600 bg-green-50 rounded px-2 py-1">{pro}</div>
+                                        {rec.research.pros.slice(0, 3).map((pro, i) => (
+                                          <div key={i} className="text-xs text-green-600 bg-green-50 rounded px-2 py-1 prose prose-xs prose-green max-w-none">
+                                            <ReactMarkdown
+                                              components={{
+                                                p: ({children}) => <span>{children}</span>,
+                                                strong: ({children}) => <strong className="font-semibold">{children}</strong>
+                                              }}
+                                            >
+                                              {pro}
+                                            </ReactMarkdown>
+                                          </div>
                                         ))}
                                       </div>
                                     )}
@@ -755,8 +799,17 @@ function App() {
                                     {rec.research.cons?.length > 0 && (
                                       <div className="space-y-1">
                                         <div className="text-xs font-medium text-red-700">✗ Real-time Cons</div>
-                                        {rec.research.cons.slice(0, 2).map((con, i) => (
-                                          <div key={i} className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{con}</div>
+                                        {rec.research.cons.slice(0, 3).map((con, i) => (
+                                          <div key={i} className="text-xs text-red-600 bg-red-50 rounded px-2 py-1 prose prose-xs prose-red max-w-none">
+                                            <ReactMarkdown
+                                              components={{
+                                                p: ({children}) => <span>{children}</span>,
+                                                strong: ({children}) => <strong className="font-semibold">{children}</strong>
+                                              }}
+                                            >
+                                              {con}
+                                            </ReactMarkdown>
+                                          </div>
                                         ))}
                                       </div>
                                     )}
