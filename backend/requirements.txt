@@ -1,24 +1,50 @@
+# ===========================================
+# Atlas.AI Backend Dependencies
+# ===========================================
+
+# Web Framework
 fastapi
 uvicorn
+
+# Data Models & Validation
 sqlmodel
+pydantic
+
+# Data Processing
+pandas
+numpy
+scikit-learn
+
+# Geospatial
 h3
 shapely
-scikit-learn
-numpy
-requests
+
+# ===========================================
+# AI / LLM
+# ===========================================
 langchain
 langchain-groq
-duckdb
-python-dotenv
 groq
-pandas
+
+# Deep Research (Web Search)
+tavily-python
+
+# ===========================================
+# Database
+# ===========================================
+# Legacy DuckDB (for migration/text-to-sql)
+duckdb
 sqlparse
-# PostGIS/PostgreSQL dependencies
+
+# PostgreSQL + PostGIS
 psycopg2-binary
 asyncpg
 sqlalchemy[asyncio]
 geoalchemy2
-# Caching
+
+# ===========================================
+# Utilities
+# ===========================================
+requests
+python-dotenv
 cachetools
-# Deep Research
-tavily-python

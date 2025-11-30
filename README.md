@@ -1,151 +1,230 @@
 # Atlas.AI 🌍
 
-**Atlas.AI** is an AI-powered location intelligence platform for exploring and analyzing geographic data. It combines interactive maps with a conversational AI interface, allowing users to query data using natural language.
+**Atlas.AI** is an AI-powered business location intelligence platform for Delhi, India. It combines interactive maps with conversational AI to help entrepreneurs find optimal locations for their businesses and discover market opportunities.
 
 ## ✨ Features
 
-- **Chat-with-Map Interface** - Ask questions like "How many restaurants are in the database?" and get instant results
-- **Text-to-SQL** - Natural language queries automatically converted to SQL using Groq's LLM
-- **Interactive Map** - Explore Delhi's geographic data with color-coded POI markers
-- **Real-time Visualization** - Dynamic rendering of areas, pincodes, and points of interest
+### 🎯 Business Location Recommender
+- Ask **"Where should I open a cafe?"** and get the top 3 best areas
+- Scoring based on 11 criteria: footfall, rent, transit, parking, safety, and more
+- Isochrone-based competitor and ecosystem analysis
+- Complementary business mapping
+
+### 📊 Area Business Analyzer  
+- Ask **"What business should I start in Hauz Khas?"** 
+- Gap analysis to find underserved categories
+- Complementary business recommendations
+- Trend indicators (Emerging 🌱 / Growing 📈 / Saturated ⚠️)
+
+### 🔍 Deep Research (Tavily AI)
+- Toggle on **Deep Research** for real-time web insights
+- Pros, cons, and market analysis from current web data
+- Powered by Tavily API with LLM summarization
+- Markdown-formatted insights with source citations
+
+### 🗺️ Interactive Map
+- Color-coded POI markers by category
+- Click areas to zoom and explore
+- Layer controls for competitors, complementary businesses
+- Isochrone visualization
+
+### 💬 Chat Interface
+- Natural language queries converted to SQL
+- Query history with quick-recall
+- Collapsible side panel for results
 
 ## 🛠️ Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | React 19, Vite, Tailwind CSS, MapLibre GL |
-| Backend | FastAPI, Python 3.11+ |
-| AI/LLM | LangChain, Groq (llama-3.3-70b) |
-| Database | PostgreSQL + PostGIS (with connection pooling) |
-| External APIs | LatLong.ai (geocoding, isochrones, POI) |
-| Deployment | Docker, Docker Compose |
+| **Frontend** | React 19, Vite, Tailwind CSS, MapLibre GL, react-markdown |
+| **Backend** | FastAPI, Python 3.11+, uvicorn |
+| **AI/LLM** | LangChain, Groq (\`openai/gpt-oss-120b\`) |
+| **Research** | Tavily API (web search + insights) |
+| **Database** | PostgreSQL 16 + PostGIS 3.4 |
+| **External APIs** | LatLong.ai (geocoding, isochrones, POI) |
+| **Deployment** | Docker, Docker Compose |
 
 ## 🚀 Quick Start
 
 ### Using Docker (Recommended)
 
-```bash
+\`\`\`bash
 # Clone the repository
 git clone https://github.com/Flameingmoy/Atlas.AI.git
 cd Atlas.AI
 
 # Create environment file with your API keys
 cp .env.example .env
-# Edit .env and add your GROQ_API_KEY and LATLONG_TOKEN
+# Edit .env and add your API keys (see Environment Variables below)
 
 # Start all services (PostGIS, Backend, Frontend)
 docker compose up -d
 
-# Migrate data from DuckDB to PostGIS (first time only)
-./scripts/migrate.sh
+# Seed the database (first time only)
+docker compose exec backend python scripts/seed_db.py
 
 # Access the application
 # Frontend: http://localhost:8080
 # Backend:  http://localhost:8000
 # PostGIS:  localhost:5433
-```
-
-### Database Migration (For Teammates)
-
-If your PostGIS database is empty, run the migration script to populate it from DuckDB:
-
-```bash
-# Make sure PostGIS is running
-docker compose up -d db
-
-# Run migration (reads from data/delhi.db, writes to PostGIS)
-./scripts/migrate.sh
-
-# Or start PostGIS and migrate in one command
-./scripts/migrate.sh --start-db
-```
-
-The migration script will:
-- Create all required tables with PostGIS geometry columns
-- Migrate 314,000+ POIs from DuckDB
-- Create spatial indexes for fast queries
+\`\`\`
 
 ### Manual Installation
 
-```bash
+\`\`\`bash
 # Backend
-pip install -r backend/requirements.txt
+cd backend
+pip install -r requirements.txt
+cd ..
 python scripts/seed_db.py
-cd backend && python -m app.main
+cd backend && uvicorn app.main:app --reload
 
 # Frontend (in another terminal)
-cd frontend && npm install && npm run dev
-```
+cd frontend
+npm install
+npm run dev
+\`\`\`
 
 ## 📖 Usage
 
-1. Open `http://localhost:8080` in your browser
-2. The map displays Delhi, India with color-coded POI markers
-3. **Search** for locations using the search bar (top center)
-4. **Click** anywhere on the map to get address info and nearby landmarks
-5. **Isochrone Analysis** - Select a distance to see reachable areas
-6. Use the **chat bar** at the bottom to ask questions:
-   - "How many restaurants are there?"
-   - "Show me all categories of POIs"
-   - "List cafes with their coordinates"
-7. Toggle map layers using the **layer control** (top-left)
+### Business Location Search
+1. Open \`http://localhost:8080\`
+2. Type: **"Where should I open a gym?"**
+3. View top 3 recommended areas with scores
+4. Click any area to zoom on map
+
+### Area Analysis
+1. Type: **"What business should I start in Connaught Place?"**
+2. View gap opportunities and complementary suggestions
+3. Check trend indicator for market saturation
+
+### Deep Research Mode
+1. Toggle ON the **🌐 Deep Research** button
+2. Submit your query
+3. Wait for Tavily AI to search the web (~15-30 seconds)
+4. View real-time pros, cons, and market insights
 
 ## 🗂️ Project Structure
 
-```
+\`\`\`
 Atlas.AI/
-├── backend/           # FastAPI backend
+├── backend/                    # FastAPI backend
 │   └── app/
-│       ├── api/       # REST endpoints
-│       ├── core/      # Database setup
-│       ├── models/    # Data models
-│       └── services/  # AI agent, text-to-sql
-├── frontend/          # React frontend
+│       ├── api/routes.py       # REST endpoints
+│       ├── core/db.py          # PostGIS connection
+│       ├── models/schema.py    # Pydantic models
+│       └── services/
+│           ├── ai_agent.py              # Chat agent with tools
+│           ├── business_location_agent.py # Location recommender agent
+│           ├── location_recommender.py   # Scoring & ranking logic
+│           ├── area_business_analyzer.py # Gap & opportunity analysis
+│           ├── deep_research_agent.py    # Tavily web research
+│           ├── text_to_sql_service.py    # NL to SQL conversion
+│           └── latlong_client.py         # External API client
+├── frontend/                   # React frontend
 │   └── src/
-│       ├── components/  # Map, LayerControl
-│       └── services/    # API client
-├── scripts/           # Database seeding
-├── data/              # Sample data files
-└── docs/              # Documentation
-```
+│       ├── App.jsx             # Main app with chat UI
+│       ├── components/
+│       │   ├── Map.jsx         # MapLibre GL map
+│       │   └── LayerControl.jsx
+│       └── services/api.js     # Backend API client
+├── data/                       # CSV data files
+├── scripts/                    # Database seeding
+├── docs/                       # Documentation
+└── docker-compose.yml          # Container orchestration
+\`\`\`
 
 ## 📚 Documentation
 
 ### Architecture
-- [Overview](docs/architecture/overview.md) - System architecture, tech stack, and core concepts
-- [Technical Design](docs/architecture/design.md) - Detailed design document with diagrams
+- [Overview](docs/architecture/overview.md) - System architecture and core concepts
+- [Technical Design](docs/architecture/design.md) - Detailed design with diagrams
 
 ### Setup
-- [Installation Guide](docs/setup/installation.md) - Get started with Docker or manual installation
-- [Database Seeding](docs/setup/database-seeding.md) - Populate the database with sample data
-- [Map Configuration](docs/setup/map-configuration.md) - Configure map tiles and POI colors
+- [Installation Guide](docs/setup/installation.md) - Docker and manual setup
+- [Database Seeding](docs/setup/database-seeding.md) - Populate with sample data
+- [Map Configuration](docs/setup/map-configuration.md) - Configure map tiles
 
 ### API Reference
-- [Database Schema](docs/api/database-schema.md) - Table definitions and spatial queries
-- [REST API](docs/api/rest-api.md) - Endpoint documentation with examples
-- [Text-to-SQL](docs/api/text-to-sql.md) - Natural language query implementation
+- [Database Schema](docs/api/database-schema.md) - PostGIS tables and spatial queries
+- [REST API](docs/api/rest-api.md) - Endpoint documentation
+- [Text-to-SQL](docs/api/text-to-sql.md) - Natural language query system
 
 ### Guides
-- [Development Guide](docs/guides/development.md) - Contributing and extending the platform
-- [Migration Notes](docs/guides/migration-notes.md) - Schema changes and version history
+- [Development Guide](docs/guides/development.md) - Contributing guidelines
+- [Migration Notes](docs/guides/migration-notes.md) - Version history
 
 ## 🔑 Environment Variables
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `GROQ_API_KEY` | Groq API key for LLM | Yes |
-| `LATLONG_TOKEN` | LatLong.ai API token | Yes |
-| `DB_HOST` | PostGIS host | No (default: `localhost`) |
-| `DB_PORT` | PostGIS port | No (default: `5433`) |
-| `DB_USER` | PostGIS user | No (default: `atlas`) |
-| `DB_PASSWORD` | PostGIS password | No (default: `atlas_secret`) |
-| `DB_NAME` | PostGIS database | No (default: `atlas_db`) |
-| `DUCKDB_PATH` | DuckDB source file for migration | No (default: `./data/delhi.db`) |
+| \`GROQ_API_KEY\` | Groq API key for LLM | ✅ Yes |
+| \`LATLONG_TOKEN\` | LatLong.ai API token | ✅ Yes |
+| \`TAVILY_API_KEY\` | Tavily API key for deep research | ⚪ Optional |
+| \`DB_HOST\` | PostGIS host | No (default: \`db\`) |
+| \`DB_PORT\` | PostGIS port | No (default: \`5432\`) |
+| \`DB_USER\` | PostGIS user | No (default: \`atlas\`) |
+| \`DB_PASSWORD\` | PostGIS password | No (default: \`atlas_secret\`) |
+| \`DB_NAME\` | PostGIS database | No (default: \`atlas_db\`) |
 
-Get API keys at:
-- Groq: [console.groq.com](https://console.groq.com)
-- LatLong.ai: [latlong.ai](https://latlong.ai)
+### Get API Keys
+- **Groq**: [console.groq.com](https://console.groq.com) (free tier available)
+- **LatLong.ai**: [latlong.ai](https://latlong.ai)
+- **Tavily**: [tavily.com](https://tavily.com) (free tier: 1000 searches/month)
+
+## 🧪 Test Queries
+
+### Location Recommendations
+\`\`\`
+Where should I open a cafe?
+Best location for a gym in Delhi?
+I want to start a clothing boutique
+Where to open a dental clinic?
+\`\`\`
+
+### Area Analysis
+\`\`\`
+What business should I start in Hauz Khas?
+Business opportunities in Connaught Place?
+What should I open in Dwarka?
+Recommend business for Greater Kailash
+\`\`\`
+
+## 🏗️ Services Architecture
+
+\`\`\`
+┌─────────────────────────────────────────────────────────────────┐
+│                         Frontend (React)                         │
+│         MapLibre GL + Tailwind + react-markdown                  │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      Backend (FastAPI)                           │
+│                     Port 8000 (Docker)                           │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+        ┌───────────────┬───────┴───────┬───────────────┐
+        ▼               ▼               ▼               ▼
+┌───────────────┐ ┌───────────────┐ ┌───────────────┐ ┌───────────────┐
+│  Location     │ │    Area       │ │    Deep       │ │  Text-to-SQL  │
+│  Recommender  │ │   Analyzer    │ │   Research    │ │    Agent      │
+│               │ │               │ │   (Tavily)    │ │               │
+└───────┬───────┘ └───────┬───────┘ └───────┬───────┘ └───────┬───────┘
+        │                 │                 │                 │
+        └────────┬────────┴────────┬────────┘                 │
+                 ▼                 ▼                          ▼
+        ┌───────────────┐  ┌───────────────┐         ┌───────────────┐
+        │   PostGIS     │  │   Groq LLM    │         │   LatLong     │
+        │   Database    │  │ gpt-oss-120b  │         │     API       │
+        └───────────────┘  └───────────────┘         └───────────────┘
+\`\`\`
 
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+Built with ❤️ for entrepreneurs looking to make data-driven location decisions.
