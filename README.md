@@ -39,7 +39,7 @@
 |-------|------------|
 | **Frontend** | React 19, Vite, Tailwind CSS, MapLibre GL, react-markdown |
 | **Backend** | FastAPI, Python 3.11+, uvicorn |
-| **AI/LLM** | LangChain, Groq (\`openai/gpt-oss-120b\`) |
+| **AI/LLM** | LangChain, Groq (`openai/gpt-oss-120b`) |
 | **Research** | Tavily API (web search + insights) |
 | **Database** | PostgreSQL 16 + PostGIS 3.4 |
 | **External APIs** | LatLong.ai (geocoding, isochrones, POI) |
@@ -49,7 +49,7 @@
 
 ### Using Docker (Recommended)
 
-\`\`\`bash
+```bash
 # Clone the repository
 git clone https://github.com/Flameingmoy/Atlas.AI.git
 cd Atlas.AI
@@ -68,11 +68,11 @@ docker compose exec backend python scripts/seed_db.py
 # Frontend: http://localhost:8080
 # Backend:  http://localhost:8000
 # PostGIS:  localhost:5433
-\`\`\`
+```
 
 ### Manual Installation
 
-\`\`\`bash
+```bash
 # Backend
 cd backend
 pip install -r requirements.txt
@@ -84,12 +84,12 @@ cd backend && uvicorn app.main:app --reload
 cd frontend
 npm install
 npm run dev
-\`\`\`
+```
 
 ## 📖 Usage
 
 ### Business Location Search
-1. Open \`http://localhost:8080\`
+1. Open `http://localhost:8080`
 2. Type: **"Where should I open a gym?"**
 3. View top 3 recommended areas with scores
 4. Click any area to zoom on map
@@ -107,7 +107,7 @@ npm run dev
 
 ## 🗂️ Project Structure
 
-\`\`\`
+```
 Atlas.AI/
 ├── backend/                    # FastAPI backend
 │   └── app/
@@ -133,7 +133,7 @@ Atlas.AI/
 ├── scripts/                    # Database seeding
 ├── docs/                       # Documentation
 └── docker-compose.yml          # Container orchestration
-\`\`\`
+```
 
 ## 📚 Documentation
 
@@ -159,14 +159,14 @@ Atlas.AI/
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| \`GROQ_API_KEY\` | Groq API key for LLM | ✅ Yes |
-| \`LATLONG_TOKEN\` | LatLong.ai API token | ✅ Yes |
-| \`TAVILY_API_KEY\` | Tavily API key for deep research | ⚪ Optional |
-| \`DB_HOST\` | PostGIS host | No (default: \`db\`) |
-| \`DB_PORT\` | PostGIS port | No (default: \`5432\`) |
-| \`DB_USER\` | PostGIS user | No (default: \`atlas\`) |
-| \`DB_PASSWORD\` | PostGIS password | No (default: \`atlas_secret\`) |
-| \`DB_NAME\` | PostGIS database | No (default: \`atlas_db\`) |
+| `GROQ_API_KEY` | Groq API key for LLM | ✅ Yes |
+| `LATLONG_TOKEN` | LatLong.ai API token | ✅ Yes |
+| `TAVILY_API_KEY` | Tavily API key for deep research | ⚪ Optional |
+| `DB_HOST` | PostGIS host | No (default: `db`) |
+| `DB_PORT` | PostGIS port | No (default: `5432`) |
+| `DB_USER` | PostGIS user | No (default: `atlas`) |
+| `DB_PASSWORD` | PostGIS password | No (default: `atlas_secret`) |
+| `DB_NAME` | PostGIS database | No (default: `atlas_db`) |
 
 ### Get API Keys
 - **Groq**: [console.groq.com](https://console.groq.com) (free tier available)
@@ -176,50 +176,139 @@ Atlas.AI/
 ## 🧪 Test Queries
 
 ### Location Recommendations
-\`\`\`
+```
 Where should I open a cafe?
 Best location for a gym in Delhi?
 I want to start a clothing boutique
 Where to open a dental clinic?
-\`\`\`
+```
 
 ### Area Analysis
-\`\`\`
+```
 What business should I start in Hauz Khas?
 Business opportunities in Connaught Place?
 What should I open in Dwarka?
 Recommend business for Greater Kailash
-\`\`\`
+```
 
-## 🏗️ Services Architecture
+## 🏗️ System Architecture
 
-\`\`\`
-┌─────────────────────────────────────────────────────────────────┐
-│                         Frontend (React)                         │
-│         MapLibre GL + Tailwind + react-markdown                  │
-└───────────────────────────────┬─────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      Backend (FastAPI)                           │
-│                     Port 8000 (Docker)                           │
-└───────────────────────────────┬─────────────────────────────────┘
-                                │
-        ┌───────────────┬───────┴───────┬───────────────┐
-        ▼               ▼               ▼               ▼
-┌───────────────┐ ┌───────────────┐ ┌───────────────┐ ┌───────────────┐
-│  Location     │ │    Area       │ │    Deep       │ │  Text-to-SQL  │
-│  Recommender  │ │   Analyzer    │ │   Research    │ │    Agent      │
-│               │ │               │ │   (Tavily)    │ │               │
-└───────┬───────┘ └───────┬───────┘ └───────┬───────┘ └───────┬───────┘
-        │                 │                 │                 │
-        └────────┬────────┴────────┬────────┘                 │
-                 ▼                 ▼                          ▼
-        ┌───────────────┐  ┌───────────────┐         ┌───────────────┐
-        │   PostGIS     │  │   Groq LLM    │         │   LatLong     │
-        │   Database    │  │ gpt-oss-120b  │         │     API       │
-        └───────────────┘  └───────────────┘         └───────────────┘
-\`\`\`
+```mermaid
+flowchart TB
+    subgraph Frontend["🖥️ Frontend (React 19)"]
+        UI[App.jsx<br/>Chat Interface]
+        Map[Map.jsx<br/>MapLibre GL]
+        API_Client[api.js<br/>Axios Client]
+    end
+
+    subgraph Backend["⚙️ Backend (FastAPI)"]
+        Routes[routes.py<br/>REST Endpoints]
+        
+        subgraph Agents["🤖 AI Agents"]
+            BLA[Business Location Agent<br/>Query Understanding]
+            LR[Location Recommender<br/>Area Scoring & Ranking]
+            ABA[Area Business Analyzer<br/>Gap & Opportunity Analysis]
+            DRA[Deep Research Agent<br/>Tavily Web Search]
+            T2S[Text-to-SQL Agent<br/>NL → SQL]
+        end
+        
+        subgraph Services["🔧 Services"]
+            LLC[LatLong Client<br/>Geocoding & Isochrones]
+        end
+    end
+
+    subgraph External["🌐 External APIs"]
+        Groq[Groq Cloud<br/>openai/gpt-oss-120b]
+        Tavily[Tavily API<br/>Web Search]
+        LatLong[LatLong.ai<br/>Geocoding & POI]
+    end
+
+    subgraph Database["🗄️ Database"]
+        PostGIS[(PostgreSQL + PostGIS<br/>314K+ POIs)]
+    end
+
+    UI --> API_Client
+    Map --> API_Client
+    API_Client -->|HTTP| Routes
+    
+    Routes --> BLA
+    Routes --> ABA
+    Routes --> T2S
+    
+    BLA --> LR
+    LR --> DRA
+    ABA --> DRA
+    
+    LR --> PostGIS
+    ABA --> PostGIS
+    T2S --> PostGIS
+    
+    BLA --> Groq
+    ABA --> Groq
+    DRA --> Groq
+    DRA --> Tavily
+    T2S --> Groq
+    
+    LR --> LLC
+    LLC --> LatLong
+```
+
+### Data Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant F as Frontend
+    participant B as Backend
+    participant G as Groq LLM
+    participant T as Tavily
+    participant DB as PostGIS
+
+    U->>F: "Where should I open a cafe?"
+    F->>B: POST /api/recommend-location
+    B->>G: Extract business type
+    G-->>B: {type: "cafe", category: "Food & Beverages"}
+    B->>DB: Query area scores & POIs
+    DB-->>B: Top 10 areas with scores
+    
+    alt Deep Research Enabled
+        B->>T: Search "cafe business Delhi [area]"
+        T-->>B: Web results & insights
+        B->>G: Summarize pros/cons
+        G-->>B: Structured insights
+    end
+    
+    B-->>F: Top 3 recommendations + research
+    F-->>U: Display results on map & panel
+```
+
+### Scoring Algorithm
+
+```mermaid
+flowchart LR
+    subgraph Input["📊 Input Data"]
+        CSV[Area Scores CSV<br/>11 Criteria per Area]
+        POI[POI Database<br/>314K+ Points]
+    end
+
+    subgraph Scoring["🎯 Composite Score"]
+        AS[Area Score<br/>Weighted by Category]
+        OS[Opportunity Score<br/>100 - Competition%]
+        ES[Ecosystem Score<br/>Complementary Businesses]
+    end
+
+    subgraph Output["🏆 Output"]
+        Top3[Top 3 Areas<br/>Ranked by Score]
+    end
+
+    CSV --> AS
+    POI --> OS
+    POI --> ES
+    
+    AS -->|40%| Top3
+    OS -->|35%| Top3
+    ES -->|25%| Top3
+```
 
 ## 📄 License
 
