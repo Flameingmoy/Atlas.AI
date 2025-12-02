@@ -191,6 +191,16 @@ What should I open in Dwarka?
 Recommend business for Greater Kailash
 ```
 
+## Screenshots
+### Default View
+![Default View](assets/SS0.png)
+### Random Map Pointer View
+![Random Map Pointer View](assets/SS1.png)
+### Non Deep Research Result
+![Non Deep Research Result](assets/SS2.png)
+### Deep Research Result
+![Deep Research Result](assets/SS3.png)
+
 ## 🏗️ System Architecture
 
 ```mermaid
