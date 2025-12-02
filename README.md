@@ -15,18 +15,22 @@
 - Gap analysis to find underserved categories
 - Complementary business recommendations
 - Trend indicators (Emerging 🌱 / Growing 📈 / Saturated ⚠️)
+![Non Deep Research Result](assets/SS2.png)
 
 ### 🔍 Deep Research (Tavily AI)
 - Toggle on **Deep Research** for real-time web insights
 - Pros, cons, and market analysis from current web data
 - Powered by Tavily API with LLM summarization
 - Markdown-formatted insights with source citations
+![Deep Research Result](assets/SS3.png)
 
 ### 🗺️ Interactive Map
 - Color-coded POI markers by category
 - Click areas to zoom and explore
 - Layer controls for competitors, complementary businesses
 - Isochrone visualization
+![Default View](assets/SS0.png)
+![Random Map Pointer View](assets/SS1.png)
 
 ### 💬 Chat Interface
 - Natural language queries converted to SQL
@@ -190,16 +194,6 @@ Business opportunities in Connaught Place?
 What should I open in Dwarka?
 Recommend business for Greater Kailash
 ```
-
-## Screenshots
-### Default View
-![Default View](assets/SS0.png)
-### Random Map Pointer View
-![Random Map Pointer View](assets/SS1.png)
-### Non Deep Research Result
-![Non Deep Research Result](assets/SS2.png)
-### Deep Research Result
-![Deep Research Result](assets/SS3.png)
 
 ## 🏗️ System Architecture
 
